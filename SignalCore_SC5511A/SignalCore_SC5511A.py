@@ -81,8 +81,11 @@ class Driver(InstrumentDriver.InstrumentWorker):
         self._lib.sc5511a_close_device(self._handle)
 
     def performSetValue(self, quant, value, sweepRate=0.0, options={}):
-        """Perform the Set Value instrument operation. This function should
-        return the actual value set by the instrument"""
+        """Perform the Set Value instrument operation.
+        
+        This function should return the actual value set by the instrument
+        
+        """
         qname = quant.name
         if qname == 'Frequency':
             value = int(round(value))
@@ -92,7 +95,6 @@ class Driver(InstrumentDriver.InstrumentWorker):
             ret = self._lib.sc5511a_set_level(self._handle, value)
             self._check_return('Amplitude', ret)
         elif qname == 'Output':
-            raise ValueError(value)
             ret = self._lib.sc5511a_set_output(self._handle, value)
             self._check_return('Output', ret)
         else:
