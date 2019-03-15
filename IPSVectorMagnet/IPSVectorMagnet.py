@@ -594,7 +594,8 @@ class Driver(VISA_Driver):
             self.setValue('Direction phi', phi)
             phi_offset = self.getValue('Phi offset')
             z_offset = self.getValue('Bz offset')
-            self._create_converter(theta, phi, phi_offset, z_offset)
+            mode = self.getValue('Specification mode')
+            self._create_converter(mode, theta, phi, phi_offset, z_offset)
             self._update_fields()
 
         elif q_name in ('Direction theta', 'Direction phi'):
@@ -607,27 +608,35 @@ class Driver(VISA_Driver):
             else:
                 theta = self.getValue('Direction theta')
                 phi = value
+            mode = self.getValue('Specification mode')
             phi_offset = self.getValue('Phi offset')
             z_offset = self.getValue('Bz offset')
-            self._create_converter(theta, phi, phi_offset, z_offset)
+            self._create_converter(mode, theta, phi, phi_offset, z_offset)
             self._update_fields()
 
         elif q_name == 'Phi offset':
+            mode = self.getValue('Specification mode')
             theta = self.getValue('Direction theta')
             phi = self.getValue('Direction phi')
             z_offset = self.getValue('Bz offset')
-            self._create_converter(theta, phi, value, z_offset)
+            self._create_converter(mode, theta, phi, value, z_offset)
             self._update_fields()
 
         elif q_name == 'Bz offset':
+            mode = self.getValue('Specification mode')
             theta = self.getValue('Direction theta')
             phi = self.getValue('Direction phi')
             phi_offset = self.getValue('Phi offset')
-            self._create_converter(theta, phi, phi_offset, value)
+            self._create_converter(mode, theta, phi, phi_offset, value)
             self._update_fields()
 
         elif q_name == 'Specification mode':
-            pass  # XXX convert keeping things in sync is a pain
+            theta = self.getValue('Direction theta')
+            phi = self.getValue('Direction phi')
+            phi_offset = self.getValue('Phi offset')
+            z_offset = self.getValue('Bz offset')
+            self._create_converter(value, theta, phi, phi_offset, z_offset)
+            self._update_fields()
 
         mode = self.getValue('Specification mode')
         max_rates = self._get_max_rates()
@@ -746,7 +755,6 @@ class Driver(VISA_Driver):
 
         return value
 
-
     def performGetValue(self, quant, options={}):
         """Perform the Get Value instrument operation.
 
@@ -791,18 +799,7 @@ class Driver(VISA_Driver):
 
         elif q_name in ('Field X', 'Field Y', 'Field Z', 'Field magnitude',
                         'Theta', 'Phi'):
-            real_values = {}
-            for k, v in self._power_supplies:
-                real_values[k] = v.read_value()
-            new_basis = self._converter.from_xyz(**real_values)
-            if self.getValue('Specification mode') == 'XYZ':
-                names = ('Field X', 'Field Y', 'Field Z')
-            if self.getValue('Specification mode') == 'Cylindrical':
-                names = ('Field magnitude', 'Phi', 'Field Z')
-            if self.getValue('Specification mode') == 'Spherical':
-                names = ('Field magnitude', 'Theta', 'Phi')
-            for name, value in zip(names, new_basis):
-                self.setValue(name, value)
+            self._update_fields()
             return self.getValue(q_name)
 
         else:
@@ -842,11 +839,34 @@ class Driver(VISA_Driver):
         qname = 'Power supply {} axis: Driver running'
         self.setValue(qname.format(axis), True)
 
-    def _create_converter(self, theta, phi, phi_offset, z_offset):
-        """
+    def _create_converter(self, mode, theta, phi, phi_offset, z_offset):
+        """Create a converter
 
         """
-        pass
+        args = (('angles', (theta, phi)), phi_offset, z_offset)
+        if mode == 'XYZ':
+            self._converter = Converter(*args)
+        elif mode == 'Cylindrical':
+            self._converter = CylindricalConverter(*args)
+        else:
+            self._converter = SphericalConverter(*args)
+
+    def _update_fields(self):
+        """Update the values of the fields after a change of basis/mode.
+
+        """
+        real_values = {}
+        for k, v in self._power_supplies:
+            real_values[k] = v.read_value()
+        new_basis = self._converter.convert_from_xyz(**real_values)
+        if self.getValue('Specification mode') == 'XYZ':
+            names = ('Field X', 'Field Y', 'Field Z')
+        if self.getValue('Specification mode') == 'Cylindrical':
+            names = ('Field magnitude', 'Phi', 'Field Z')
+        if self.getValue('Specification mode') == 'Spherical':
+            names = ('Field magnitude', 'Theta', 'Phi')
+        for name, value in zip(names, new_basis):
+            self.setValue(name, value)
 
 if __name__ == '__main__':
     pass
