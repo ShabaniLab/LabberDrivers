@@ -262,7 +262,7 @@ class Keithley2450(CustomPowerSupply):
             values = np.concatenate(values)
 
         # convert the values to the proper unit
-        values /= self._conversion_factor
+        values /= self.conversion_factor
         self._stop_sweeping.clear()
         self._sweeping_thread = Thread(target=self._update_output,
                                       args=(times, values))
@@ -710,7 +710,7 @@ class Driver(VISA_Driver):
 
         else:
             if q_name not in ('Field magnitude', 'Theta', 'Phi'):
-                raise
+                raise KeyError()
             rate = sweepRate or self.getValue(q_name + ' rate')
             values = {k: self.getValue(name)
                       for k, name in zip(('r', 'theta', 'phi'),
@@ -835,7 +835,7 @@ class Driver(VISA_Driver):
         driver_cls = MODELS[model]
         cmd = 'Power supply %s axis:  Conversion factor (T->native)'
         cf = model = self.getValue(cmd % axis)
-        self._power_supplies[axis.lower()] = model(self._visa_rm, add)
+        self._power_supplies[axis.lower()] = model(self._visa_rm, address)
         qname = 'Power supply {} axis: Driver running'
         self.setValue(qname.format(axis), True)
 
