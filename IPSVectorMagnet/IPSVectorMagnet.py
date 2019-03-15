@@ -11,12 +11,7 @@ from VISA_Driver import VISA_Driver
 
 
 class IPSPowerSupply:
-    """[summary]
-
-    Parameters
-    ----------
-    object : [type]
-        [description]
+    """Single axis driver for Oxford IPS.
 
     """
 
@@ -494,7 +489,6 @@ class Driver(VISA_Driver):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._target_xyz = ()
         self._power_supplies = {'x': None, 'y': None, 'z': None}
         self._visa_rm = None
         self._lock = RLock()
@@ -763,35 +757,35 @@ class Driver(VISA_Driver):
         # For quantities corresponding to software only parameters simply
         # return the value
         if q_name in ('Power supply X axis: VISA address',
-                          'Power supply Y axis: VISA address',
-                          'Power supply Z axis: VISA address',
-                          'Power supply X axis: Model',
-                          'Power supply Y axis: Model',
-                          'Power supply Z axis: Model',
-                          'Power supply X axis: Conversion factor (T->native)',
-                          'Power supply Y axis: Conversion factor (T->native)',
-                          'Power supply Z axis: Conversion factor (T->native)',
-                          'Power supply X axis: Driver running',
-                          'Power supply Y axis: Driver running',
-                          'Power supply Z axis: Driver running',
-                          'Max field',
-                          'Max rate: X',
-                          'Max rate: Y',
-                          'Max rate: Z',
-                          'Specification mode',
-                          'Reference specification mode',
-                          'Direction x',
-                          'Direction y',
-                          'Direction z',
-                          'Phi offset',
-                          'Bz offset',
-                          'Field X rate',
-                          'Field Y rate',
-                          'Field Z rate',
-                          'Field magnitude rate',
-                          'Theta rate',
-                          'Phi rate',
-                          ):
+                      'Power supply Y axis: VISA address',
+                      'Power supply Z axis: VISA address',
+                      'Power supply X axis: Model',
+                      'Power supply Y axis: Model',
+                      'Power supply Z axis: Model',
+                      'Power supply X axis: Conversion factor (T->native)',
+                      'Power supply Y axis: Conversion factor (T->native)',
+                      'Power supply Z axis: Conversion factor (T->native)',
+                      'Power supply X axis: Driver running',
+                      'Power supply Y axis: Driver running',
+                      'Power supply Z axis: Driver running',
+                      'Max field',
+                      'Max rate: X',
+                      'Max rate: Y',
+                      'Max rate: Z',
+                      'Specification mode',
+                      'Reference specification mode',
+                      'Direction x',
+                      'Direction y',
+                      'Direction z',
+                      'Phi offset',
+                      'Bz offset',
+                      'Field X rate',
+                      'Field Y rate',
+                      'Field Z rate',
+                      'Field magnitude rate',
+                      'Theta rate',
+                      'Phi rate',
+                      ):
             return quant.getValue()
 
         elif q_name in ('X Coil field', 'Y Coil field', 'Z Coil field'):
@@ -820,7 +814,6 @@ class Driver(VISA_Driver):
         return (self.getValue('Max rate: X'),
                 self.getValue('Max rate: Y'),
                 self.getValue('Max rate: Z'))
-
 
     def _start_power_supply_driver(self, axis, address, model):
         """Start a power supply driver.
