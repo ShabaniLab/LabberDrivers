@@ -4,7 +4,7 @@ from threading import Thread, Event, RLock
 from time import time, sleep
 
 import numpy as np
-from scipy.spatial.transform import Rotation
+from scipy_rotation import Rotation
 from pyvisa import ResourceManager
 
 from VISA_Driver import VISA_Driver
@@ -452,7 +452,7 @@ class SphericalConverter(Converter):
 
         """
         if axis == 'r':
-            rates = dict.fromkeys(('r', 'phi', 'z'), 0)
+            rates = dict.fromkeys(('r', 'theta', 'phi'), 0)
             rates[axis] = rate
             return self.convert_to_xyz(**rates)
 
@@ -504,8 +504,8 @@ class Driver(VISA_Driver):
             add = self.getValue(
                 'Power supply {} axis: VISA address'.format(axis))
             model = self.getValue(
-                'Power supply {} axis: VISA address'.format(axis))
-            if options[opt]:
+                'Power supply {} axis: Model'.format(axis))
+            if opt in self.getOptions():
                 if not add or not model:
                     continue  # The user will specify the address later
                 self._start_power_supply_driver(axis, add, model)
@@ -531,10 +531,11 @@ class Driver(VISA_Driver):
 
         """
         q_name = quant.name
+        seen = True
 
         if q_name in ('Power supply X axis: VISA address',
-                          'Power supply Y axis: VISA address',
-                          'Power supply Z axis: VISA address'):
+                      'Power supply Y axis: VISA address',
+                      'Power supply Z axis: VISA address'):
             axis = q_name[13]
             model = self.getValue('Power supply %s axis: Model' % axis)
             if value and model:
@@ -546,8 +547,8 @@ class Driver(VISA_Driver):
                     self._power_supplies[axis.lower()] = None
 
         elif q_name in ('Power supply X axis: Model',
-                            'Power supply Y axis: Model',
-                            'Power supply Z axis: Model'):
+                        'Power supply Y axis: Model',
+                        'Power supply Z axis: Model'):
             axis = q_name[13]
             add = self.getValue('Power supply %s axis: VISA address' % axis)
             if value and model:
@@ -560,18 +561,18 @@ class Driver(VISA_Driver):
 
 
         elif q_name in ('Power supply X axis: Conversion factor (T->native)',
-                            'Power supply Y axis: Conversion factor (T->native)',
-                            'Power supply Z axis: Conversion factor (T->native)',
-                            ):
+                        'Power supply Y axis: Conversion factor (T->native)',
+                        'Power supply Z axis: Conversion factor (T->native)',
+                        ):
             axis = q_name[13]
             psu = self._power_supplies[axis.lower()]
             if psu is not None:
                 psu.conversion_factor = value
 
         elif q_name in ('Max field',
-                            'Max rate: X', 'Max rate: Y', 'Max rate: Z',
-                            'Field X rate', 'Field Y rate', 'Field Z rate',
-                            'Field magnitude rate', 'Theta rate', 'Phi rate'):
+                        'Max rate: X', 'Max rate: Y', 'Max rate: Z',
+                        'Field X rate', 'Field Y rate', 'Field Z rate',
+                        'Field magnitude rate', 'Theta rate', 'Phi rate'):
             pass  # Nothing to do for pure software values
 
         elif q_name == 'Reference specification mode':
@@ -631,6 +632,12 @@ class Driver(VISA_Driver):
             z_offset = self.getValue('Bz offset')
             self._create_converter(value, theta, phi, phi_offset, z_offset)
             self._update_fields()
+        
+        else:
+            seen = False
+
+        if seen:
+            return value
 
         mode = self.getValue('Specification mode')
         max_rates = self._get_max_rates()
@@ -826,9 +833,9 @@ class Driver(VISA_Driver):
                     'are {}')
             raise KeyError(msg.format(model, list(MODELS)))
         driver_cls = MODELS[model]
-        cmd = 'Power supply %s axis:  Conversion factor (T->native)'
-        cf = model = self.getValue(cmd % axis)
-        self._power_supplies[axis.lower()] = model(self._visa_rm, address)
+        cmd = 'Power supply %s axis: Conversion factor (T->native)'
+        cf = self.getValue(cmd % axis)
+        self._power_supplies[axis.lower()] = driver_cls(self._visa_rm, address, cf)
         qname = 'Power supply {} axis: Driver running'
         self.setValue(qname.format(axis), True)
 
