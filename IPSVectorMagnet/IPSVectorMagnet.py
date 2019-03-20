@@ -18,7 +18,7 @@ class IPSPowerSupply:
     def __init__(self, driver, axis):
         self._driver = driver  # for IPS we get the Labber driver
         self._axis = axis.upper()
-        self.sweep_resolution = 1e-4
+        self.sweep_resolution = 0.0001
         self._sweeping_thread = None
         self._stop_sweeping = Event()
 
@@ -51,14 +51,14 @@ class IPSPowerSupply:
         """
         self._stop_sweeping.clear()
         if rate is not None:
-            self.set_rate(rate if time is None else rate[0])
+            self.set_rate(rate if times is None else rate[0])
         self._do_write('SET:DEV:GRP{}:PSU:SIG:FSET:{}'.format(self._axis,
                                                                 target))
         self._do_write('SET:DEV:GRP{}:PSU:ACTN:RTOS'.format(self._axis))
 
         if times is not None:
             self._sweeping_thread = Thread(target=self._adjust_rate,
-                                           args=(time, rate))
+                                           args=(times, rate))
             self._sweeping_thread.start()
 
     def stop_sweep(self):
@@ -92,7 +92,8 @@ class IPSPowerSupply:
         if not answer.endswith('VALID'):
             if answer.endswith('N/A'):
                 raise ValueError('A wrong board id was used. Use READ:SYS:CAT '
-                                 'to get the valid board ids.')
+                                 'to get the valid board ids. '
+                                 'Full answer was {}'.format(answer))
             msg = 'The operation failed the iPS answered: {}'
             raise RuntimeError(msg.format(answer))
 
@@ -105,7 +106,8 @@ class IPSPowerSupply:
         # strip first character
         if answer.endswith('N/A'):
             raise ValueError('A wrong board id was used. Use READ:SYS:CAT to'
-                             ' get the valid board ids.')
+                             ' get the valid board ids. '
+                             'Full answer was {}'.format(answer))
         elif answer.endswith('INVALID'):
             msg = 'The iPS failed to answer to {}'
             raise RuntimeError(msg.format(get_cmd))
@@ -211,7 +213,7 @@ class Keithley2450(CustomPowerSupply):
         """Read the current output current and convert.
 
         """
-        return float(self._driver.query(':SOUR:CURR?'))*self.conversion_factor
+        return float(self._driver.query(':SOUR:CURR?'))/self.conversion_factor
 
     def start_sweep(self, target, rate, times=None):
         """Start a sweep managed by the computer for simplicity.
@@ -228,16 +230,19 @@ class Keithley2450(CustomPowerSupply):
 
         """
         current = self.read_value()
+        # Convert the rate in T/s
+        rate /= 60
+
         if times is None:
             # we update the value of the output every 10 ms
-            step_number = int(round(abs(target-current)/(rate/60/100))) + 1
+            step_number = int(round(abs((target-current)/(rate/100)))) + 1
             values = np.linspace(current, target,
                                  step_number)
             times = np.linspace(0, 0.01*(step_number-1), step_number)
         else:
             # Compute the points in time at which to update the value of the
             # output
-            intervals = times[1] - times[0]
+            intervals = abs(times[1] - times[0])
             val_times = [np.linspace(t, t+intervals-0.01,
                                      int(round(100*(intervals))))
                          for t in times]
@@ -257,7 +262,7 @@ class Keithley2450(CustomPowerSupply):
             values = np.concatenate(values)
 
         # convert the values to the proper unit
-        values /= self.conversion_factor
+        values *= self.conversion_factor
         self._stop_sweeping.clear()
         self._sweeping_thread = Thread(target=self._update_output,
                                       args=(times, values))
@@ -312,8 +317,8 @@ def xyz_axis_to_angles(x, y, z):
     second is the azimuthal angle counted from x.
 
     """
-    theta = atan2(sqrt(x**2 + y**2), z)
-    phi = atan2(y, x)
+    theta = np.rad2deg(atan2(sqrt(x**2 + y**2), z))
+    phi = np.rad2deg(atan2(y, x))
     return theta, phi
 
 
@@ -336,9 +341,10 @@ class Converter:
         # new frame as a consequence to transform a vector in the original
         # frame to the new frame we need to apply the inverse rotations in the
         # reverse order
-        coordinate_change = [Rotation.from_euler('z', axis[1]),
-                             Rotation.from_euler('y', axis[0]),
-                             Rotation.from_euler('z', phi_offset - axis[1])]
+        coordinate_change = [Rotation.from_euler('z', axis[1], degrees=True),
+                             Rotation.from_euler('y', axis[0], degrees=True),
+                             Rotation.from_euler('z', phi_offset - axis[1],
+                                                 degrees=True)]
         self._forward_change = (coordinate_change[2].inv() *
                                 coordinate_change[1].inv() *
                                 coordinate_change[0].inv())
@@ -364,6 +370,12 @@ class Converter:
             vec[2] += self._z_offset
         return self._backward_change.apply(vec)
 
+    def convert_to_xyz(self, x, y, z):
+        return self.from_new_basis(np.array(x, y, z))
+
+    def convert_from_xyz(self, x, y, z):
+        return self.to_new_basis(np.array((x, y, z)))
+
 
 class CylindricalConverter(Converter):
     """Object handling a basis change.
@@ -373,11 +385,12 @@ class CylindricalConverter(Converter):
     """
 
     def convert_to_xyz(self, r, phi, z):
+        phi = np.deg2rad(phi)
         return self.from_new_basis(np.array(r*cos(phi), r*sin(phi), z))
 
     def convert_from_xyz(self, x, y, z):
         x, y, z = self.to_new_basis(np.array((x, y, z)))
-        return np.array((sqrt(x**2 + y**2), atan2(y, x), z))
+        return np.array((sqrt(x**2 + y**2), np.rad2deg(atan2(y, x)), z))
 
     def convert_rate_to_xyz_rates(self, axis, rate, state=None, target=None):
         """Convert a rate expressed in the new basis to the old basis.
@@ -394,26 +407,40 @@ class CylindricalConverter(Converter):
             Target value of phi, only required for phi ramp.
 
         """
-        if axis in ('r', 'z'):
+        if axis == 'z':
             rates = dict.fromkeys(('r', 'phi', 'z'), 0)
             rates[axis] = rate
             return self.convert_to_xyz(**rates)
+
+        if state is None:
+            msg = ('In cylindrical, the state must be specified for r and phi'
+                   ' (state: {})')
+            raise ValueError(msg.format(state))
+
+        if axis == 'r':
+            x_rate = rate*np.cos(state[1])
+            y_rate = rate*np.sin(state[1])
+            return self.from_new_basis(np.array([x_rate, y_rate, 0]),
+                                       no_offset=True)
 
         if state is None or target is None:
             msg = ('For phi ramp the state and target value must be '
                     'specified (state: {}, target: {})')
             raise ValueError(msg.format(state, target))
 
+        # Convert the rate to rad/min
+        rate = rate*np.pi/180
+
         # Compute the intermediate angles spaced by one degree, and omit the
         # last one since we won't have to update the rate
-        phis = np.linspace(state[1], target,
-                           int(round(target - state[1])) + 1)[:-1]
+        phis = np.deg2rad(np.linspace(state[1], target,
+                                      int(round(target - state[1])) + 1)[:-1])
         x_rate = -state[0]*np.sin(phis)*rate
         y_rate = state[0]*np.cos(phis)*rate
         z_rate = np.zeros_like(phis)
 
         return ((phis - phis[0])/rate,
-                self.from_new_basis(np.array(x_rate, y_rate, z_rate).T))
+                self.from_new_basis(np.array(x_rate, y_rate, z_rate).T).T)
 
 
 class SphericalConverter(Converter):
@@ -424,6 +451,8 @@ class SphericalConverter(Converter):
     """
 
     def convert_to_xyz(self, r, theta, phi):
+        theta = np.deg2rad(theta)
+        phi = np.deg2rad(phi)
         x, y, z = r*cos(phi)*sin(theta), r*sin(phi)*sin(theta), r*cos(theta)
         return self.from_new_basis(np.array((x, y, z)))
 
@@ -432,8 +461,8 @@ class SphericalConverter(Converter):
         r = sqrt(x**2 + y**2 + z**2)
         if not r:
             return 0, 0, 0
-        theta = acos(z/r)
-        phi = atan2(y, x)
+        theta = np.rad2deg(acos(z/r))
+        phi = np.rad2deg(atan2(y, x))
         return r, theta, phi
 
     def convert_rate_to_xyz_rates(self, axis, rate, state=None, target=None):
@@ -451,21 +480,31 @@ class SphericalConverter(Converter):
             Target value of phi, only required for theta/phi ramp.
 
         """
+        if state is None:
+            msg = ('In sphericaL, the state must be specified (state: {})')
+            raise ValueError(msg.format(state))
+
         if axis == 'r':
-            rates = dict.fromkeys(('r', 'theta', 'phi'), 0)
-            rates[axis] = rate
-            return self.convert_to_xyz(**rates)
+            x_rate = rate*np.sin(state[1])*cos(state[2])
+            y_rate = rate*np.sin(state[1])*sin(state[2])
+            z_rate = rate*np.cos(state[1])
+            return self.from_new_basis(np.array([x_rate, y_rate, z_rate]),
+                                       no_offset=True)
 
         if state is None or target is None:
             msg = ('For theta/phi ramp the state and target value must be '
                     'specified (state: {}, target: {})')
             raise ValueError(msg.format(state, target))
 
+        # Convert the rate to rad/min
+        rate = rate*np.pi/180
+
         if axis == 'theta':
             # Compute the intermediate angles spaced by one degree, and omit
             # the last one since we won't have to update the rate
             angles = np.linspace(state[1], target,
-                                 int(round(target - state[1])) + 1)[:-1]
+                                 int(round(abs(target - state[1]))) + 1)[:-1]
+            angles = np.deg2rad(angles)
             x_rate = state[0]*np.cos(angles)*cos(state[2])*rate
             y_rate = state[0]*np.cos(angles)*sin(state[2])*rate
             z_rate = -state[0]*np.sin(angles)
@@ -474,14 +513,15 @@ class SphericalConverter(Converter):
             # Compute the intermediate angles spaced by one degree, and omit
             # the last one since we won't have to update the rate
             angles = np.linspace(state[2], target,
-                                 int(round(target - state[2])) + 1)[:-1]
+                                 int(round(abs(target - state[2]))) + 1)[:-1]
+            angles = np.deg2rad(angles)
             x_rate = -state[0]*sin(state[1])*np.sin(angles)*rate
             y_rate = state[0]*sin(state[1])*np.cos(angles)*rate
             z_rate = np.zeros_like(angles)
 
         return ((angles - angles[0])/rate,
-                self.from_new_basis(np.array(x_rate, y_rate, z_rate).T,
-                                    no_offset=True))
+                self.from_new_basis(np.array([x_rate, y_rate, z_rate]).T,
+                                    no_offset=True).T)
 
 
 class Driver(VISA_Driver):
@@ -511,6 +551,12 @@ class Driver(VISA_Driver):
                 self._start_power_supply_driver(axis, add, model)
             else:
                 self._power_supplies[axis.lower()] = IPSPowerSupply(self, axis)
+        mode = self.getValue('Specification mode')
+        theta = self.getValue('Direction theta')
+        phi = self.getValue('Direction phi')
+        phi_offset = self.getValue('Phi offset')
+        z_offset = self.getValue('Bz offset')
+        self._create_converter(mode, theta, phi, phi_offset, z_offset)
 
     def performClose(self, bError=False, options={}):
         """Perform the close instrument connection operation.
@@ -594,15 +640,37 @@ class Driver(VISA_Driver):
             self._update_fields()
 
         elif q_name in ('Direction theta', 'Direction phi'):
-            self.setValue('Direction x', sin(theta)*cos(phi))
-            self.setValue('Direction y', sin(theta)*sin(phi))
-            self.setValue('Direction z', cos(theta))
             if 'theta' in q_name:
                 theta = value
                 phi = self.getValue('Direction phi')
             else:
                 theta = self.getValue('Direction theta')
                 phi = value
+            self.setValue('Direction x', sin(theta)*cos(phi))
+            self.setValue('Direction y', sin(theta)*sin(phi))
+            self.setValue('Direction z', cos(theta))
+            mode = self.getValue('Specification mode')
+            phi_offset = self.getValue('Phi offset')
+            z_offset = self.getValue('Bz offset')
+            self._create_converter(mode, theta, phi, phi_offset, z_offset)
+            self._update_fields()
+
+        elif q_name in ('Direction XZangle', 'Direction YZangle'):
+            if 'XZangle' in q_name:
+                xz = value
+                yz = self.getValue('Direction YZangle')
+            else:
+                xz = self.getValue('Direction XZangle')
+                yz = value
+            xzrot = Rotation.from_euler('y', -xz, degrees=True)
+            yzrot = Rotation.from_euler('x', yz, degrees=True)
+            x, y, z = (xzrot*yzrot).apply([0, 0, 1])
+            self.setValue('Direction x', x)
+            self.setValue('Direction y', y)
+            self.setValue('Direction z', z)
+            theta, phi = xyz_axis_to_angles(x, y, z)
+            self.setValue('Direction theta', theta)
+            self.setValue('Direction phi', phi)
             mode = self.getValue('Specification mode')
             phi_offset = self.getValue('Phi offset')
             z_offset = self.getValue('Bz offset')
@@ -632,7 +700,7 @@ class Driver(VISA_Driver):
             z_offset = self.getValue('Bz offset')
             self._create_converter(value, theta, phi, phi_offset, z_offset)
             self._update_fields()
-        
+
         else:
             seen = False
 
@@ -644,8 +712,8 @@ class Driver(VISA_Driver):
         if mode == 'XYZ':
             if q_name not in ('Field X', 'Field Y', 'Field Z'):
                 raise KeyError()
-            rate = sweepRate or self.getValue('Field %s rate' % q_name[-1])
-            values = {k: self.getValue('Field %s' % k)
+            rate = sweepRate
+            values = {k.lower(): self.getValue('Field %s' % k)
                       for k in ('X', 'Y', 'Z')}
             values[q_name[-1].lower()] = value
             targets = self._converter.from_new_basis([values[k]
@@ -656,9 +724,8 @@ class Driver(VISA_Driver):
                                  'fields would be: %s' % targets)
             rates = [0, 0, 0]
             rates[['X', 'Y', 'Z'].index(q_name[-1])] = rate
-            rates = self.from_new_basis(rates)
-            if any(r > max_r for r, max_r in zip(rates, max_rates)):
-                raise ValueError('Rate would exceed max rate: %s' % rates)
+            rates = self._converter.from_new_basis(rates, no_offset=True)
+            self._validate_rates(rates, max_rates)
 
             for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
                 psu = self._power_supplies[axis]
@@ -667,7 +734,7 @@ class Driver(VISA_Driver):
         elif mode == 'Cylindrical':
             if q_name not in ('Field magnitude', 'Phi', 'Field Z'):
                 raise KeyError()
-            rate = sweepRate or self.getValue(q_name + ' rate')
+            rate = sweepRate
             values = {k: self.getValue(name)
                       for k, name in zip(('r', 'phi', 'z'),
                                          ('Field magnitude', 'Phi', 'Field Z'))
@@ -691,19 +758,14 @@ class Driver(VISA_Driver):
                 times, rates =\
                     self._converter.convert_rate_to_xyz_rates(key, rate,
                                                               state, value)
-                if any(np.any(np.greater(r, max_r))
-                       for r, max_r in zip(rates, max_rates)):
-                    raise ValueError('Rate would exceed max rate: %s' % rates)
+                self._validate_rates(rates, max_rates)
 
                 for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
                     psu = self._power_supplies[axis]
                     psu.start_sweep(t, r, times)
             else:
-                rates = [0, 0, 0]
-                rates[['r', 'phi', 'z'].index(key)] = rate
-                rates = self._converter.convert_rate_to_xyz_rates(key, rates)
-                if any(r > max_r for r, max_r in zip(rates, max_rates)):
-                    raise ValueError('Rate would exceed max rate: %s' % rates)
+                rates = self._converter.convert_rate_to_xyz_rates(key, rate)
+                self._validate_rates(rates, max_rates)
 
                 for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
                     psu = self._power_supplies[axis]
@@ -712,7 +774,7 @@ class Driver(VISA_Driver):
         else:
             if q_name not in ('Field magnitude', 'Theta', 'Phi'):
                 raise KeyError()
-            rate = sweepRate or self.getValue(q_name + ' rate')
+            rate = sweepRate
             values = {k: self.getValue(name)
                       for k, name in zip(('r', 'theta', 'phi'),
                                          ('Field magnitude', 'Theta', 'Phi'))
@@ -722,34 +784,30 @@ class Driver(VISA_Driver):
                    'Phi': 'phi'}[q_name]
             values[key] = value
             targets =\
-                self._converter.convert_to_xyz([values[k]
-                                                for k in ('r', 'theta', 'phi')]
+                self._converter.convert_to_xyz(*[values[k]
+                                                 for k in ('r', 'theta', 'phi')
+                                                 ]
                                                 )
             if any(t > self.getValue('Max field') for t in targets):
                 raise ValueError('The requested field is too large. Coil '
                                  'fields would be: %s' % targets)
 
+            state = (self.getValue('Field magnitude'),
+                     self.getValue('Theta'),
+                     self.getValue('Phi'))
             if key in ('theta', 'phi'):
-                state = (self.getValue('Field magnitude'),
-                         self.getValue('Theta'),
-                         self.getValue('Phi'))
                 times, rates =\
                     self._converter.convert_rate_to_xyz_rates(key, rate,
                                                               state, value)
-                if any(np.any(np.greater(r, max_r))
-                       for r, max_r in zip(rates, max_rates)):
-                    raise ValueError('Rate would exceed max rate: %s' % rates)
+                self._validate_rates(rates, max_rates)
 
                 for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
                     psu = self._power_supplies[axis]
                     psu.start_sweep(t, r, times)
             else:
-                rates = [0, 0, 0]
-                rates[['r', 'theta', 'phi'].index(key)] = rate
-                rates = self._converter.convert_rate_to_xyz_rates(key, rates)
-                if any(r > max_r for r, max_r in zip(rates, max_rates)):
-                    raise ValueError('Rate would exceed max rate: %s' % rates)
-
+                rates = self._converter.convert_rate_to_xyz_rates(key, rate,
+                                                                  state)
+                self._validate_rates(rates, max_rates)
                 for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
                     psu = self._power_supplies[axis]
                     psu.start_sweep(t, r)
@@ -784,6 +842,10 @@ class Driver(VISA_Driver):
                       'Direction x',
                       'Direction y',
                       'Direction z',
+                      'Direction theta',
+                      'Direction phi',
+                      'Direction XZangle',
+                      'Direction YZangle',
                       'Phi offset',
                       'Bz offset',
                       'Field X rate',
@@ -856,7 +918,7 @@ class Driver(VISA_Driver):
 
         """
         real_values = {}
-        for k, v in self._power_supplies:
+        for k, v in self._power_supplies.items():
             real_values[k] = v.read_value()
         new_basis = self._converter.convert_from_xyz(**real_values)
         if self.getValue('Specification mode') == 'XYZ':
@@ -867,6 +929,12 @@ class Driver(VISA_Driver):
             names = ('Field magnitude', 'Theta', 'Phi')
         for name, value in zip(names, new_basis):
             self.setValue(name, value)
+
+    def _validate_rates(self, rates, max_rates):
+        if any(np.any(np.greater(r, max_r))
+                for r, max_r in zip(rates, max_rates)):
+            raise ValueError('Rate would exceed max rate: %s' %
+                             np.max(rates, axis=1))
 
 if __name__ == '__main__':
     pass
