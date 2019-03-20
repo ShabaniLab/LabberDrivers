@@ -755,7 +755,7 @@ class Driver(VISA_Driver):
                 state = (self.getValue('Field magnitude'),
                          self.getValue('Phi'),
                          self.getValue('Field Z'))
-                times, rates =\
+                times, targets, rates =\
                     self._converter.convert_rate_to_xyz_rates(key, rate,
                                                               state, value)
                 self._validate_rates(rates, max_rates)
@@ -764,7 +764,8 @@ class Driver(VISA_Driver):
                     psu = self._power_supplies[axis]
                     psu.start_sweep(t, r, times)
             else:
-                rates = self._converter.convert_rate_to_xyz_rates(key, rate)
+                rates = self._converter.convert_rate_to_xyz_rates(key, rate,
+                                                                  state)
                 self._validate_rates(rates, max_rates)
 
                 for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
