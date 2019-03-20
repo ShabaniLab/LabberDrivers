@@ -107,13 +107,13 @@ class Driver(InstrumentDriver.InstrumentWorker):
         params = RFParameters()
         self._lib.sc5511a_get_rf_parameters(self._handle, params)
         if qname == 'Frequency':
-            return params.rf1_freq
+            return float(params.rf1_freq)
         elif qname == 'Amplitude':
-            return params.rf_level
+            return float(params.rf_level)
         elif qname == 'Output':
             status = DeviceStatus()
             self._lib.sc5511a_get_device_status(self._handle, status)
-            return status.operate_status.rf1_out_enable
+            return bool(status.operate_status.rf1_out_enable)
         else:
             raise RuntimeError('Unknown attribute %s' % qname)
 
