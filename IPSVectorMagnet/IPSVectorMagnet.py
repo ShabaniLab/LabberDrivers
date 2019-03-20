@@ -29,6 +29,12 @@ class IPSPowerSupply:
         get_cmd = 'READ:DEV:GRP{}:PSU:SIG:FLD'.format(self._axis)
         return float(self._do_read(get_cmd)[:-1])
 
+    def set_target_field(self, field):
+        """Set the sweeping rate in T/min.
+
+        """
+        self._do_write('SET:DEV:GRP{}:PSU:SIG:FSET:{}'.format(self._axis,
+                                                              field))
     def set_rate(self, rate):
         """Set the sweeping rate in T/min.
 
@@ -50,15 +56,18 @@ class IPSPowerSupply:
 
         """
         self._stop_sweeping.clear()
-        if rate is not None:
-            self.set_rate(rate if times is None else rate[0])
-        self._do_write('SET:DEV:GRP{}:PSU:SIG:FSET:{}'.format(self._axis,
+        if times is None:
+            if rate is not None:
+                self.set_rate(rate)
+            self._do_write('SET:DEV:GRP{}:PSU:SIG:FSET:{}'.format(self._axis,
                                                                 target))
-        self._do_write('SET:DEV:GRP{}:PSU:ACTN:RTOS'.format(self._axis))
+            self._do_write('SET:DEV:GRP{}:PSU:ACTN:RTOS'.format(self._axis))
 
         if times is not None:
-            self._sweeping_thread = Thread(target=self._adjust_rate,
-                                           args=(times, rate))
+            if isinstance(target, float):
+                target = target*np.ones_like(times)
+            self._sweeping_thread = Thread(target=self._adjust_output,
+                                           args=(times, target, rate))
             self._sweeping_thread.start()
 
     def stop_sweep(self):
@@ -119,16 +128,18 @@ class IPSPowerSupply:
         # Extract the numeric answer with its unit
         return answer[len(get_cmd) + 1:].split(':', 1)[0]
 
-    def _adjust_rate(self, times, rates):
+    def _adjust_output(self, times, targets, rates):
         """Adjust continuously the sweeping rate based on a time array.
 
         """
         start = time()
         times *= 60
-        for t, r in zip(times[1:], rates[:1]):
+        for t, f, r in zip(times, targets, rates):
             while time() - start < t:
                 sleep(0.001)
+            self.set_target_field(f)
             self.set_rate(r)
+            self._do_write('SET:DEV:GRP{}:PSU:ACTN:RTOS'.format(self._axis))
             if self._stop_sweeping.is_set():
                 return
 
@@ -166,7 +177,7 @@ class CustomPowerSupply:
 
         Parameters
         ----------
-        target : float
+        target : float or np.ndarray
             Target value expressed in T.
         rate : float or np.ndarray
             Sweeping rate expressed in T/min.
@@ -250,14 +261,14 @@ class Keithley2450(CustomPowerSupply):
             # Compute the value of the output to set at each time.
             values = []
             last_val = current
-            for time_slice, r in zip(val_times, rate):
-                time_slice = time_slice - time_slice[0]
-                values.append(last_val + r*time_slice)
-                last_val = values[-1][-1] + 0.01*r
+            for time_slice, t in zip(val_times, target):
+                values.append(np.linspace(last_val, t,
+                                          len(time_slice) + 1)[:-1])
+                last_val = t
 
-            # Add the missing the last point to times and values
+            # Add the missing last point to times and values
             val_times.append(np.array([val_times[-1][-1] + 0.01]))
-            values.append(np.array([target]))
+            values.append(np.array([target[-1]]))
             times = np.concatenate(val_times)
             values = np.concatenate(values)
 
@@ -431,16 +442,26 @@ class CylindricalConverter(Converter):
         # Convert the rate to rad/min
         rate = rate*np.pi/180
 
-        # Compute the intermediate angles spaced by one degree, and omit the
-        # last one since we won't have to update the rate
+        # Compute the intermediate angles spaced by one degree
         phis = np.deg2rad(np.linspace(state[1], target,
-                                      int(round(target - state[1])) + 1)[:-1])
-        x_rate = -state[0]*np.sin(phis)*rate
-        y_rate = state[0]*np.cos(phis)*rate
-        z_rate = np.zeros_like(phis)
+                                      int(round(target - state[1])) + 1))
 
-        return ((phis - phis[0])/rate,
-                self.from_new_basis(np.array(x_rate, y_rate, z_rate).T).T)
+        # We keep the target to set at each time (value to reach by the next
+        # time)
+        x_vals = state[0]*np.cos(phis)[1:]
+        y_vals = state[0]*np.sin(phis)[1:]
+        z_vals = np.zeros_like(phis)[1:]
+
+        # We keep the rate to set at the beginning of each time interval
+        x_rate = -rate*state[0]*np.sin(phis)[:-1]
+        y_rate = rate*state[0]*np.cos(phis)[:-1]
+        z_rate = np.zeros_like(phis)[:-1]
+
+        return ((phis[:-1] - phis[0])/rate,
+                self.from_new_basis(np.array(x_vals, y_vals, z_vals).T).T,
+                self.from_new_basis(np.array(x_rate, y_rate, z_rate).T,
+                                    no_offset=True).T
+                )
 
 
 class SphericalConverter(Converter):
@@ -500,28 +521,44 @@ class SphericalConverter(Converter):
         rate = rate*np.pi/180
 
         if axis == 'theta':
-            # Compute the intermediate angles spaced by one degree, and omit
-            # the last one since we won't have to update the rate
+            # Compute the intermediate angles spaced by one degree
             angles = np.linspace(state[1], target,
-                                 int(round(abs(target - state[1]))) + 1)[:-1]
+                                 int(round(abs(target - state[1]))) + 1)
             angles = np.deg2rad(angles)
-            x_rate = state[0]*np.cos(angles)*cos(state[2])*rate
-            y_rate = state[0]*np.cos(angles)*sin(state[2])*rate
-            z_rate = -state[0]*np.sin(angles)
+
+            # We keep the target to set at each time (value to reach by the
+            # next  time)
+            x_vals = (state[0]*np.sin(angles)*cos(state[2]))[1:]
+            y_vals = (state[0]*np.sin(angles)*sin(state[2]))[1:]
+            z_vals = (state[0]*np.cos(angles))[1:]
+
+            # We keep the rate to set at the beginning of each time interval
+            x_rate = (rate*state[0]*np.cos(angles)*cos(state[2]))[:-1]
+            y_rate = (rate*state[0]*np.cos(angles)*sin(state[2]))[:-1]
+            z_rate = (-rate*state[0]*np.sin(angles))[:-1]
 
         elif axis == 'phi':
-            # Compute the intermediate angles spaced by one degree, and omit
-            # the last one since we won't have to update the rate
-            angles = np.linspace(state[2], target,
-                                 int(round(abs(target - state[2]))) + 1)[:-1]
+            # Compute the intermediate angles spaced by one degree
+            angles = np.linspace(state[1], target,
+                                 int(round(abs(target - state[1]))) + 1)
             angles = np.deg2rad(angles)
-            x_rate = -state[0]*sin(state[1])*np.sin(angles)*rate
-            y_rate = state[0]*sin(state[1])*np.cos(angles)*rate
-            z_rate = np.zeros_like(angles)
 
-        return ((angles - angles[0])/rate,
-                self.from_new_basis(np.array([x_rate, y_rate, z_rate]).T,
-                                    no_offset=True).T)
+            # We keep the target to set at each time (value to reach by the
+            # next  time)
+            x_vals = (state[0]*np.sin(angles)*cos(state[2]))[1:]
+            y_vals = (state[0]*np.sin(angles)*sin(state[2]))[1:]
+            z_vals = (state[0]*np.cos(angles))[1:]
+
+            # We keep the rate to set at the beginning of each time interval
+            x_rate = (-rate*state[0]*sin(state[1])*np.sin(angles))[:-1]
+            y_rate = (rate*state[0]*sin(state[1])*np.cos(angles))[:-1]
+            z_rate = np.zeros_like(angles)[:-1]
+
+        return ((angles[:-1] - angles[0])/rate,
+                self.from_new_basis(np.array(x_vals, y_vals, z_vals).T).T,
+                self.from_new_basis(np.array(x_rate, y_rate, z_rate).T,
+                                    no_offset=True).T
+                )
 
 
 class Driver(VISA_Driver):
@@ -709,10 +746,11 @@ class Driver(VISA_Driver):
 
         mode = self.getValue('Specification mode')
         max_rates = self._get_max_rates()
+        rate = sweepRate
         if mode == 'XYZ':
             if q_name not in ('Field X', 'Field Y', 'Field Z'):
                 raise KeyError()
-            rate = sweepRate
+
             values = {k.lower(): self.getValue('Field %s' % k)
                       for k in ('X', 'Y', 'Z')}
             values[q_name[-1].lower()] = value
@@ -734,36 +772,34 @@ class Driver(VISA_Driver):
         elif mode == 'Cylindrical':
             if q_name not in ('Field magnitude', 'Phi', 'Field Z'):
                 raise KeyError()
-            rate = sweepRate
-            values = {k: self.getValue(name)
-                      for k, name in zip(('r', 'phi', 'z'),
-                                         ('Field magnitude', 'Phi', 'Field Z'))
-                      }
+
             key = {'Field magnitude': 'r',
                    'Phi': 'phi',
                    'Field Z': 'z'}[q_name]
-            values[key] = value
-            targets =\
-                self._converter.convert_to_xyz([values[k]
-                                                for k in ('r', 'phi', 'z')]
-                                                )
-            if any(t > self.getValue('Max field') for t in targets):
-                raise ValueError('The requested field is too large. Coil '
-                                 'fields would be: %s' % targets)
+
+            state = (self.getValue('Field magnitude'),
+                     self.getValue('Phi'),
+                     self.getValue('Field Z'))
 
             if key == 'phi':
-                state = (self.getValue('Field magnitude'),
-                         self.getValue('Phi'),
-                         self.getValue('Field Z'))
                 times, targets, rates =\
                     self._converter.convert_rate_to_xyz_rates(key, rate,
                                                               state, value)
                 self._validate_rates(rates, max_rates)
+                self._validate_targets(targets)
 
                 for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
                     psu = self._power_supplies[axis]
                     psu.start_sweep(t, r, times)
             else:
+                values = {k: v for k, v in zip(('r', 'phi', 'z'), state)}
+                values[key] = value
+                targets =\
+                    self._converter.convert_to_xyz([values[k]
+                                                    for k in ('r', 'phi', 'z')]
+                                                    )
+                self._validate_targets(targets)
+
                 rates = self._converter.convert_rate_to_xyz_rates(key, rate,
                                                                   state)
                 self._validate_rates(rates, max_rates)
@@ -775,40 +811,41 @@ class Driver(VISA_Driver):
         else:
             if q_name not in ('Field magnitude', 'Theta', 'Phi'):
                 raise KeyError()
-            rate = sweepRate
-            values = {k: self.getValue(name)
-                      for k, name in zip(('r', 'theta', 'phi'),
-                                         ('Field magnitude', 'Theta', 'Phi'))
-                      }
+
             key = {'Field magnitude': 'r',
-                   'Theta': 'theta',
-                   'Phi': 'phi'}[q_name]
-            values[key] = value
-            targets =\
-                self._converter.convert_to_xyz(*[values[k]
-                                                 for k in ('r', 'theta', 'phi')
-                                                 ]
-                                                )
-            if any(t > self.getValue('Max field') for t in targets):
-                raise ValueError('The requested field is too large. Coil '
-                                 'fields would be: %s' % targets)
+                       'Theta': 'theta',
+                       'Phi': 'phi'}[q_name]
 
             state = (self.getValue('Field magnitude'),
                      self.getValue('Theta'),
                      self.getValue('Phi'))
+
             if key in ('theta', 'phi'):
-                times, rates =\
+                times, targets, rates =\
                     self._converter.convert_rate_to_xyz_rates(key, rate,
                                                               state, value)
+                self._validate_targets(targets)
                 self._validate_rates(rates, max_rates)
 
                 for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
                     psu = self._power_supplies[axis]
                     psu.start_sweep(t, r, times)
             else:
+
+                # Determine the target value
+                values = {k: v for k, v in zip(('r', 'theta', 'phi'), state)}
+                values[key] = value
+                vec = [values[k] for k in ('r', 'theta', 'phi') ]
+                targets = self._converter.convert_to_xyz(*vec)
+
+                # Check that we respect the magnet bound
+                self._validate_targets(targets)
+
+                # Compute the rates for each axis
                 rates = self._converter.convert_rate_to_xyz_rates(key, rate,
                                                                   state)
                 self._validate_rates(rates, max_rates)
+
                 for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
                     psu = self._power_supplies[axis]
                     psu.start_sweep(t, r)
@@ -930,6 +967,12 @@ class Driver(VISA_Driver):
             names = ('Field magnitude', 'Theta', 'Phi')
         for name, value in zip(names, new_basis):
             self.setValue(name, value)
+
+    def _validate_targets(self, targets):
+        max_field = self.getValue('Max field')
+        if any(np.any(np.greater(field, max_field)) for field in targets):
+            raise ValueError('Field would exceed max field: %s' %
+                             np.max(targets, axis=1))
 
     def _validate_rates(self, rates, max_rates):
         if any(np.any(np.greater(r, max_r))
