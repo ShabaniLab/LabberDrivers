@@ -39,8 +39,8 @@ class IPSPowerSupply:
         """Set the sweeping rate in T/min.
 
         """
-        self._do_write('SET:DEV:GRP{}:PSU:SIG:RFST:{}'.format(self._axis,
-                                                              rate*60.0))
+        msg = 'SET:DEV:GRP{}:PSU:SIG:RFST:{}'
+        self._do_write(msg.format(self._axis, abs(rate)))
 
     def start_sweep(self, target, rate, times=None):
         """Start sweeping the field.
@@ -59,28 +59,63 @@ class IPSPowerSupply:
         if times is None:
             if rate is not None:
                 self.set_rate(rate)
-            self._do_write('SET:DEV:GRP{}:PSU:SIG:FSET:{}'.format(self._axis,
-                                                                target))
+            self.set_target_field(target)
             self._do_write('SET:DEV:GRP{}:PSU:ACTN:RTOS'.format(self._axis))
 
         if times is not None:
+            target_mask = np.zeros_like(target)
             if isinstance(target, float):
                 target = target*np.ones_like(times)
+                target_mask[0] = 1
+            else:
+                start = target[0]
+                stop = target[-1]
+                imin = min(np.argmin(target), np.argmax(target))
+                imax = max(np.argmax(target), np.argmin(target))
+                # Simple ramp we are better off specifying only the final target
+                if imin == 0 and imax == len(target) - 1:
+                    target[0] = stop
+                    target_mask[0] = 1
+                # We go through one max
+                elif imin == 0 and imax != len(target) - 1:
+                    target_mask[0] = 1
+                    target_mask[imax+1] = 1
+                    target[0] = target[imax]
+                    target[imax+1] = stop
+                # We go through one min
+                elif imin != 0 and imax == len(target) - 1:
+                    target_mask[0] = 1
+                    target_mask[imin+1] = 1
+                    target[0] = target[imin]
+                    target[imin+1] = target[-1]
+                # Assume we never have more than on extra min and max
+                else:
+                    target_mask[0] = 1
+                    target_mask[imax+1] = 1
+                    target_mask[imin+1] = 1
+                    target[0] = target[imin]
+                    target[imin+1] = target[imax]
+                    target[imax+1] = stop
             self._sweeping_thread = Thread(target=self._adjust_output,
-                                           args=(times, target, rate))
+                                           args=(times, target_mask,
+                                                 target, rate))
             self._sweeping_thread.start()
 
     def stop_sweep(self):
         """Stop the currently running sweep if any.
 
         """
-        self._stop_sweeping.set()
+        if self._sweeping_thread:
+            self._stop_sweeping.set()
+            self._sweeping_thread.join()
         self._do_write('SET:DEV:GRP{}:PSU:ACTN:HOLD'.format(self._axis))
 
     def check_if_sweeping(self):
         """Check if the magnet is currently sweeping.
 
         """
+        if self._sweeping_thread and self._sweeping_thread.is_alive():
+            return True
         cmd = 'READ:DEV:GRP{}:PSU:SIG:FSET'.format(self._axis)
         target = float(self._do_read(cmd)[:-1])
         current_value = self.read_value()
@@ -98,7 +133,7 @@ class IPSPowerSupply:
         """
         with self._driver._lock:
             answer = self._driver.askAndLog(msg, False)
-        if not answer.endswith('VALID'):
+        if not answer.endswith(':VALID'):
             if answer.endswith('N/A'):
                 raise ValueError('A wrong board id was used. Use READ:SYS:CAT '
                                  'to get the valid board ids. '
@@ -128,16 +163,16 @@ class IPSPowerSupply:
         # Extract the numeric answer with its unit
         return answer[len(get_cmd) + 1:].split(':', 1)[0]
 
-    def _adjust_output(self, times, targets, rates):
+    def _adjust_output(self, times, targets_mask, targets, rates):
         """Adjust continuously the sweeping rate based on a time array.
 
         """
         start = time()
-        times *= 60
-        for t, f, r in zip(times, targets, rates):
+        for t, m, f, r in zip(times, targets_mask, targets, rates):
             while time() - start < t:
                 sleep(0.001)
-            self.set_target_field(f)
+            if m:
+                self.set_target_field(f)
             self.set_rate(r)
             self._do_write('SET:DEV:GRP{}:PSU:ACTN:RTOS'.format(self._axis))
             if self._stop_sweeping.is_set():
@@ -242,13 +277,14 @@ class Keithley2450(CustomPowerSupply):
         """
         current = self.read_value()
         # Convert the rate in T/s
-        rate /= 60
+        rate /= 60.0
 
         if times is None:
             # we update the value of the output every 10 ms
-            step_number = int(round(abs((target-current)/(rate/100)))) + 1
-            values = np.linspace(current, target,
-                                 step_number)
+            if rate == 0.0:
+                return
+            step_number = int(round(abs(target-current)/(rate/100))) + 1
+            values = np.linspace(current, target, step_number)
             times = np.linspace(0, 0.01*(step_number-1), step_number)
         else:
             # Compute the points in time at which to update the value of the
@@ -370,7 +406,10 @@ class Converter:
         """
         new = self._forward_change.apply(vec)
         if not no_offset:
-            new[2] -= self._z_offset
+            if len(new.shape) == 1:
+                new[2] -= self._z_offset
+            else:
+                new[:, 2] -= self._z_offset
         return new
 
     def from_new_basis(self, vec, no_offset=False):
@@ -378,11 +417,14 @@ class Converter:
 
         """
         if not no_offset:
-            vec[2] += self._z_offset
+            if len(vec.shape) == 1:
+                vec[2] += self._z_offset
+            else:
+                vec[:, 2] += self._z_offset
         return self._backward_change.apply(vec)
 
     def convert_to_xyz(self, x, y, z):
-        return self.from_new_basis(np.array(x, y, z))
+        return self.from_new_basis(np.array([x, y, z]))
 
     def convert_from_xyz(self, x, y, z):
         return self.to_new_basis(np.array((x, y, z)))
@@ -397,7 +439,7 @@ class CylindricalConverter(Converter):
 
     def convert_to_xyz(self, r, phi, z):
         phi = np.deg2rad(phi)
-        return self.from_new_basis(np.array(r*cos(phi), r*sin(phi), z))
+        return self.from_new_basis(np.array([r*cos(phi), r*sin(phi), z]))
 
     def convert_from_xyz(self, x, y, z):
         x, y, z = self.to_new_basis(np.array((x, y, z)))
@@ -429,8 +471,9 @@ class CylindricalConverter(Converter):
             raise ValueError(msg.format(state))
 
         if axis == 'r':
-            x_rate = rate*np.cos(state[1])
-            y_rate = rate*np.sin(state[1])
+            phi = np.deg2rad(state[1])
+            x_rate = rate*np.cos(phi)
+            y_rate = rate*np.sin(phi)
             return self.from_new_basis(np.array([x_rate, y_rate, 0]),
                                        no_offset=True)
 
@@ -444,7 +487,12 @@ class CylindricalConverter(Converter):
 
         # Compute the intermediate angles spaced by one degree
         phis = np.deg2rad(np.linspace(state[1], target,
-                                      int(round(target - state[1])) + 1))
+                                      int(round(abs(target - state[1]))) + 1))
+        # If there is less than 1deg between the starting point and the
+        # target we end end with an array in which the target is missing
+        # so add it.
+        if len(phis) == 1:
+            phis = np.append(phis, target)
 
         # We keep the target to set at each time (value to reach by the next
         # time)
@@ -457,9 +505,10 @@ class CylindricalConverter(Converter):
         y_rate = rate*state[0]*np.cos(phis)[:-1]
         z_rate = np.zeros_like(phis)[:-1]
 
-        return ((phis[:-1] - phis[0])/rate,
-                self.from_new_basis(np.array(x_vals, y_vals, z_vals).T).T,
-                self.from_new_basis(np.array(x_rate, y_rate, z_rate).T,
+        # We need the times in second
+        return ((phis[:-1] - phis[0])/rate*60,
+                self.from_new_basis(np.array([x_vals, y_vals, z_vals]).T).T,
+                self.from_new_basis(np.array([x_rate, y_rate, z_rate]).T,
                                     no_offset=True).T
                 )
 
@@ -518,45 +567,58 @@ class SphericalConverter(Converter):
             raise ValueError(msg.format(state, target))
 
         # Convert the rate to rad/min
-        rate = rate*np.pi/180
+        rate = np.deg2rad(rate)
 
         if axis == 'theta':
             # Compute the intermediate angles spaced by one degree
             angles = np.linspace(state[1], target,
                                  int(round(abs(target - state[1]))) + 1)
+            # If there is less than 1deg between the starting point and the
+            # target we end end with an array in which the target is missing
+            # so add it.
+            if len(angles) == 1:
+                angles = np.append(angles, target)
             angles = np.deg2rad(angles)
+            phi = np.deg2rad(state[2])
 
             # We keep the target to set at each time (value to reach by the
             # next  time)
-            x_vals = (state[0]*np.sin(angles)*cos(state[2]))[1:]
-            y_vals = (state[0]*np.sin(angles)*sin(state[2]))[1:]
+            x_vals = (state[0]*np.sin(angles)*cos(phi))[1:]
+            y_vals = (state[0]*np.sin(angles)*sin(phi))[1:]
             z_vals = (state[0]*np.cos(angles))[1:]
 
             # We keep the rate to set at the beginning of each time interval
-            x_rate = (rate*state[0]*np.cos(angles)*cos(state[2]))[:-1]
-            y_rate = (rate*state[0]*np.cos(angles)*sin(state[2]))[:-1]
+            x_rate = (rate*state[0]*np.cos(angles)*cos(phi))[:-1]
+            y_rate = (rate*state[0]*np.cos(angles)*sin(phi))[:-1]
             z_rate = (-rate*state[0]*np.sin(angles))[:-1]
 
         elif axis == 'phi':
             # Compute the intermediate angles spaced by one degree
-            angles = np.linspace(state[1], target,
-                                 int(round(abs(target - state[1]))) + 1)
+            angles = np.linspace(state[2], target,
+                                 int(round(abs(target - state[2]))) + 1)
+            # If there is less than 1deg between the starting point and the
+            # target we end end with an array in which the target is missing
+            # so add it.
+            if len(angles) == 1:
+                angles = np.append(angles, target)
             angles = np.deg2rad(angles)
+            theta = np.deg2rad(state[1])
 
             # We keep the target to set at each time (value to reach by the
-            # next  time)
-            x_vals = (state[0]*np.sin(angles)*cos(state[2]))[1:]
-            y_vals = (state[0]*np.sin(angles)*sin(state[2]))[1:]
-            z_vals = (state[0]*np.cos(angles))[1:]
+            # next time)
+            x_vals = (state[0]*sin(theta)*np.cos(angles))[1:]
+            y_vals = (state[0]*sin(theta)*np.sin(angles))[1:]
+            z_vals = (state[0]*cos(theta)*np.ones_like(angles))[1:]
 
             # We keep the rate to set at the beginning of each time interval
-            x_rate = (-rate*state[0]*sin(state[1])*np.sin(angles))[:-1]
-            y_rate = (rate*state[0]*sin(state[1])*np.cos(angles))[:-1]
+            x_rate = (-rate*state[0]*sin(theta)*np.sin(angles))[:-1]
+            y_rate = (rate*state[0]*sin(theta)*np.cos(angles))[:-1]
             z_rate = np.zeros_like(angles)[:-1]
 
-        return ((angles[:-1] - angles[0])/rate,
-                self.from_new_basis(np.array(x_vals, y_vals, z_vals).T).T,
-                self.from_new_basis(np.array(x_rate, y_rate, z_rate).T,
+        # We need the times in second
+        return ((angles[:-1] - angles[0])/rate*60,
+                self.from_new_basis(np.array([x_vals, y_vals, z_vals]).T).T,
+                self.from_new_basis(np.array([x_rate, y_rate, z_rate]).T,
                                     no_offset=True).T
                 )
 
@@ -795,8 +857,9 @@ class Driver(VISA_Driver):
                 values = {k: v for k, v in zip(('r', 'phi', 'z'), state)}
                 values[key] = value
                 targets =\
-                    self._converter.convert_to_xyz([values[k]
-                                                    for k in ('r', 'phi', 'z')]
+                    self._converter.convert_to_xyz(*[values[k]
+                                                     for k in ('r', 'phi', 'z')
+                                                     ]
                                                     )
                 self._validate_targets(targets)
 
