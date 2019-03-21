@@ -417,7 +417,7 @@ class Converter:
 
         """
         if not no_offset:
-            if len(vec.shape) == 1:
+            if not hasattr(vec, 'shape') or len(vec.shape) == 1:
                 vec[2] += self._z_offset
             else:
                 vec[:, 2] += self._z_offset
