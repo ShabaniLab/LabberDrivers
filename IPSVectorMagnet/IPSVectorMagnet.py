@@ -283,7 +283,7 @@ class Keithley2450(CustomPowerSupply):
             # we update the value of the output every 10 ms
             if rate == 0.0:
                 return
-            step_number = int(round(abs(target-current)/(rate/100))) + 1
+            step_number = int(round(abs((target-current)/(rate/100)))) + 1
             values = np.linspace(current, target, step_number)
             times = np.linspace(0, 0.01*(step_number-1), step_number)
         else:
