@@ -254,12 +254,15 @@ class Keithley2450(CustomPowerSupply):
 
         self._sweeping_thread = None
         self._stop_sweeping = Event()
+        self._lock = RLock()
 
     def read_value(self):
         """Read the current output current and convert.
 
         """
-        return float(self._driver.query(':SOUR:CURR?'))/self.conversion_factor
+        with self._lock:
+            return (float(self._driver.query(':SOUR:CURR?')) /
+                    self.conversion_factor)
 
     def start_sweep(self, target, rate, times=None):
         """Start a sweep managed by the computer for simplicity.
@@ -349,7 +352,8 @@ class Keithley2450(CustomPowerSupply):
         for t, val in zip(times[1:], values[1:]):
             while time() - start < t:
                 sleep(0.001)
-            driv.write(cmd.format(val))
+            with self._lock:
+                driv.write(cmd.format(val))
             if stop_ev.is_set():
                 break
 
