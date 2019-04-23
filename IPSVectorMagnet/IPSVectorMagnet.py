@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from math import sin, cos, sqrt, atan2, acos
-from threading import Thread, Event, RLock
+from threading import Thread, Event
+from multiprocessing import RLock
 from time import time, sleep
 
 import numpy as np
@@ -185,7 +186,7 @@ class CustomPowerSupply:
     Parameters
     ----------
     rm : visa.ResourceManager
-        Resource manager to sue to connect to the instrument.
+        Resource manager to use to connect to the instrument.
     address : str
         Visa address of the instrument.
     conversion_factor : float
@@ -242,29 +243,45 @@ class Keithley2450(CustomPowerSupply):
     """
     def __init__(self, rm, address, conversion_factor):
         super().__init__(rm, address, conversion_factor)
-        self._driver.write_termination = '\n'
-        self._driver.read_termination = '\n'
-        if self._driver.query(':OUTP:STAT?') == '0':
-            msg = 'The output of {} is off, please turn it on.'
-            raise RuntimeError(msg.format(address))
-        mode = self._driver.query(':SOUR:FUNC?')
-        if mode != 'CURR':
-            msg = 'The output of {} is not set to current mode (read {}).'
-            raise RuntimeError(msg.format(address, mode))
+        self._lock = RLock()
+        self._address = address
+        self._rm = rm
+        with self._lock:
+            self._driver.timeout = 2
+            self._driver.write_termination = '\n'
+            self._driver.read_termination = '\n'
+            if self._driver.query(':OUTP:STAT?') == '0':
+                msg = 'The output of {} is off, please turn it on.'
+                raise RuntimeError(msg.format(address))
+            mode = self._driver.query(':SOUR:FUNC?')
+            if mode != 'CURR':
+                msg = 'The output of {} is not set to current mode (read {}).'
+                raise RuntimeError(msg.format(address, mode))
 
         self._sweeping_thread = None
         self._stop_sweeping = Event()
-        self._lock = RLock()
+        self._curr_val = 0
 
     def read_value(self):
         """Read the current output current and convert.
 
         """
-        with self._lock:
-            return (float(self._driver.query(':SOUR:CURR?')) /
-                    self.conversion_factor)
+        if (self._sweeping_thread and self._sweeping_thread.is_alive()):
+            return self._curr_val/self.conversion_factor
 
-    def start_sweep(self, target, rate, times=None):
+        with self._lock:
+            try:
+                return (float(self._driver.query(':SOUR:CURR?')) /
+                        self.conversion_factor)
+            except Exception:
+                self._driver.close()
+                self._driver = self._rm.open_resource(self._address)
+                self._driver.timeout = 2
+                self._driver.write_termination = '\n'
+                self._driver.read_termination = '\n'
+                return self.read_value()
+
+    def start_sweep(self, target, rate, times=None, slave=False):
         """Start a sweep managed by the computer for simplicity.
 
         Parameters
@@ -274,27 +291,37 @@ class Keithley2450(CustomPowerSupply):
         rate : float | np.ndarray
             Rate at which to update the output.
         times : np.ndarray
-            Times at which to change the range (those are expected to be
+            Times at which to change the value (those are expected to be
             regularly spaced).
 
         """
         current = self.read_value()
         # Convert the rate in T/s
-        rate /= 60.0
+        rate /= 60.0/0.995 # taking into account a weird drift
+        interval = 0.1  # Time interval between values update
+
+        if slave:
+            self._stop_sweeping.clear()
+            self._sweeping_thread = Thread(target=self._update_slave_output,
+                                           args=(times, values))
+            self._sweeping_thread.start()
 
         if times is None:
-            # we update the value of the output every 10 ms
+            # we update the value of the output every 100 ms
             if rate == 0.0:
                 return
-            step_number = int(round(abs((target-current)/(rate/100)))) + 1
+            step_number = int(round(np.abs((target-current)/(rate*interval)))) + 1
             values = np.linspace(current, target, step_number)
-            times = np.linspace(0, 0.01*(step_number-1), step_number)
+            times = np.linspace(0, interval*(step_number-1), step_number)
+        elif len(times) == 1:
+            times = np.array(times[0], times[0])
+            values = np.array(target[0], target[0])
         else:
             # Compute the points in time at which to update the value of the
             # output
             intervals = abs(times[1] - times[0])
-            val_times = [np.linspace(t, t+intervals-0.01,
-                                     int(round(100*(intervals))))
+            val_times = [np.linspace(t, t+intervals-interval,
+                                     int(round(intervals/interval)))
                          for t in times]
 
             # Compute the value of the output to set at each time.
@@ -306,7 +333,7 @@ class Keithley2450(CustomPowerSupply):
                 last_val = t
 
             # Add the missing last point to times and values
-            val_times.append(np.array([val_times[-1][-1] + 0.01]))
+            val_times.append(np.array([val_times[-1][-1] + interval]))
             values.append(np.array([target[-1]]))
             times = np.concatenate(val_times)
             values = np.concatenate(values)
@@ -315,7 +342,7 @@ class Keithley2450(CustomPowerSupply):
         values *= self.conversion_factor
         self._stop_sweeping.clear()
         self._sweeping_thread = Thread(target=self._update_output,
-                                      args=(times, values))
+                                       args=(times, values))
         self._sweeping_thread.start()
 
     def stop_sweep(self):
@@ -347,11 +374,12 @@ class Keithley2450(CustomPowerSupply):
         """
         stop_ev = self._stop_sweeping
         driv = self._driver
-        cmd = ':SOUR:CURR {}'
+        cmd = ':SOUR:CURR {:.5f}'
         start = time()
         for t, val in zip(times[1:], values[1:]):
             while time() - start < t:
                 sleep(0.001)
+            self._curr_val = val
             with self._lock:
                 driv.write(cmd.format(val))
             if stop_ev.is_set():
