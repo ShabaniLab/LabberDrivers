@@ -688,6 +688,7 @@ class Driver(VISA_Driver):
         phi_offset = self.getValue('Phi offset')
         z_offset = self.getValue('Bz offset')
         self._create_converter(mode, theta, phi, phi_offset, z_offset)
+        self._update_fields()
 
     def performClose(self, bError=False, options={}):
         """Perform the close instrument connection operation.
