@@ -6,7 +6,7 @@ import numpy as np
 
 class Driver(VISA_Driver):
     """ This class implements the Agilen 33250 AWG"""
-    
+
 
     def performOpen(self, options={}):
         """Perform the operation of opening the instrument connection"""
@@ -25,10 +25,14 @@ class Driver(VISA_Driver):
         # keep track of if waveform is updated, to avoid sending it many times
         if self.isFirstCall(options):
             self.bWaveUpdated = False
+
         if quant.name in ('Arb. Waveform',):
             # set value, then mark that waveform needs an update
             quant.setValue(value)
             self.bWaveUpdated = True
+        elif quant.name == 'Assert trigger':
+            # pass
+            self.com.assert_trigger()
         else:
             # for all other cases, call VISA driver
             value = VISA_Driver.performSetValue(self, quant, value, sweepRate,
@@ -55,7 +59,7 @@ class Driver(VISA_Driver):
         # select volatile waveform
         self.write(':FUNC:USER VOLATILE')
 
-        
+
     def scaleWaveformToI16(self, vData, dVpp):
         """Scales the waveform and returns data in a string of I16"""
         # clip waveform and store in-place

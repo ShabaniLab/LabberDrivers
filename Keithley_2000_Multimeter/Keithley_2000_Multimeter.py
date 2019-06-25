@@ -13,22 +13,18 @@ class Driver(VISA_Driver):
 
         """
         if quant.name in ('BufferValues',):
-            self.wait_for_srq()
-            value  = self.query_binary_values('data:data?')
+            self.write('FORM:DATA ASCII')
+            self.com.query("status:measurement?")
+            self.write('trace:clear')
+            self.write("status:measurement:enable 512; *sre 1")
+            self.com.write("data:feed:control next")
+            self.com.wait_for_srq(timeout=1200000)
+            value  = self.com.query_ascii_values('data:data?')
         else:
             # for all other cases, call VISA driver
             value = VISA_Driver.performGetValue(self, quant, options=options)
         return value
 
-    def performArm(self, quant_names, options={}):
-        """Prepare the system for the next trigger.
-
-        """
-        self.write('trace:clear')
-        self.write("status:measurement:enable 512; *sre 1")
-        self.write("feed:control next")
-        self.write('FORM:DATA DREAL;FORM:BORD NORM')
-        self.write('initiate')
 
 if __name__ == '__main__':
     pass
