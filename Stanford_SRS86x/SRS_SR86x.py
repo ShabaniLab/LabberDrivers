@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+import time
+import numpy as np
 from VISA_Driver import VISA_Driver
 
 class Driver(VISA_Driver):
@@ -14,8 +16,8 @@ class Driver(VISA_Driver):
             sCmd = 'SNAP? 0,1'
             sAns = self.askAndLog(sCmd).strip()
             lData =  sAns.split(',')
-            
-            #Sometimes, we receive the value twice 
+
+            #Sometimes, we receive the value twice
             #(0.12e-3,4.56e-70.12e-3,4.56e-7 instead of 0.12e-3,4.56e-7)
             #This is a simple fix:
             if len(lData) > 2:
@@ -25,12 +27,46 @@ class Driver(VISA_Driver):
             #Hence, another simple fix:
             if lData[1][-1] == "-":
                 lData[1] = ldata[1][:-1]
-                
+
             # return complex values
             return complex(float(lData[0].strip()), float(lData[1].strip()))
+        elif name == 'Capture-data':
+            # Start capturing data
+            trig = self.getValue('Capture-trigger model')
+            trigger_mode = {'Immediate': 'IMM',
+                            'Trigger-start': 'TRIG',
+                            'Trigger-sample': 'SAMP'}[trig]
+
+            self.write('CAPTURESTART ONESHOT %s' % trigger_mode)
+
+            # Wait for the buffer to be full
+            tic = time.time()
+            while (time.time() - tic < 120 and
+                   not int(self.cmd.query('CAPTURESTAT?')) & 2):
+                time.sleep(0.1)
+
+            # Get the data
+            size = int(round(self.readValueFromOther('Capture-buffer size')))
+            if size > 64:
+                raise RuntimeError('Buffer with more 64 kB are not supported.')
+            else:
+                return self.cmd.query_binary_values('CAPTUREGET? 0 %d' % size,
+                                                    container=np.ndarray)
+
+        elif name in ('Capture-trigger mode', 'Capture-run mode'):
+            return quant.getValue()
         else:
             # run the generic visa driver case
             return VISA_Driver.performGetValue(self, quant, options=options)
+
+    def performSetValue(self, quant, value, options={}):
+        """Perform the Set Value instrument operation
+
+        """
+        if quant.name in ('Capture-trigger mode', 'Capture-run mode'):
+            return value
+        else:
+            VISA_Driver.performSetValue(self, quant, value, options=options)
 
 
 if __name__ == '__main__':
