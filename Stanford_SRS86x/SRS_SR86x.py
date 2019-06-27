@@ -32,17 +32,19 @@ class Driver(VISA_Driver):
             return complex(float(lData[0].strip()), float(lData[1].strip()))
         elif name == 'Capture-data':
             # Start capturing data
-            trig = self.getValue('Capture-trigger model')
+            trig = self.getValue('Capture-trigger mode')
+
             trigger_mode = {'Immediate': 'IMM',
                             'Trigger-start': 'TRIG',
                             'Trigger-sample': 'SAMP'}[trig]
 
-            self.write('CAPTURESTART ONESHOT %s' % trigger_mode)
+            self.com.write('CAPTURESTART ONESHOT, %s' % trigger_mode)
 
             # Wait for the buffer to be full
             tic = time.time()
-            while (time.time() - tic < 120 and
-                   not int(self.cmd.query('CAPTURESTAT?')) & 2):
+            while not int(self.com.query('CAPTURESTAT?')) & 4:
+                if time.time() - tic > 120:
+                    raise RuntimeError('Data acquisition timed out.')
                 time.sleep(0.1)
 
             # Get the data
@@ -50,23 +52,23 @@ class Driver(VISA_Driver):
             if size > 64:
                 raise RuntimeError('Buffer with more 64 kB are not supported.')
             else:
-                return self.cmd.query_binary_values('CAPTUREGET? 0 %d' % size,
+                return self.com.query_binary_values('CAPTUREGET? 0, %d' % size,
                                                     container=np.ndarray)
 
-        elif name in ('Capture-trigger mode', 'Capture-run mode'):
+        elif name in ('Capture-trigger mode',):
             return quant.getValue()
         else:
             # run the generic visa driver case
             return VISA_Driver.performGetValue(self, quant, options=options)
 
-    def performSetValue(self, quant, value, options={}):
+    def performSetValue(self, quant, value, sweepRate=0.0, options={}):
         """Perform the Set Value instrument operation
 
         """
-        if quant.name in ('Capture-trigger mode', 'Capture-run mode'):
+        if quant.name in ('Capture-trigger mode',):
             return value
         else:
-            VISA_Driver.performSetValue(self, quant, value, options=options)
+            return VISA_Driver.performSetValue(self, quant, value, options=options)
 
 
 if __name__ == '__main__':
