@@ -52,8 +52,18 @@ class Driver(VISA_Driver):
             if size > 64:
                 raise RuntimeError('Buffer with more 64 kB are not supported.')
             else:
-                return self.com.query_binary_values('CAPTUREGET? 0, %d' % size,
+                data = self.com.query_binary_values('CAPTUREGET? 0, %d' % size,
                                                     container=np.ndarray)
+                data = data.reshape((-1, 4)).T
+                config = self.readValueFromOther('Capture-config')
+                if config == 'X':
+                    return data[0]
+                elif config == 'XY':
+                    return np.sqrt(data[0]**2 + data[1]**2)
+                elif config == 'RT':
+                    return data[2]
+                else:
+                    return data
 
         elif name in ('Capture-trigger mode',):
             return quant.getValue()
