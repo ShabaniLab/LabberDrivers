@@ -3,6 +3,7 @@
 from VISA_Driver import VISA_Driver
 from InstrumentConfig import InstrumentQuantity
 import numpy as np
+import time
 
 __version__ = "0.0.1"
 
@@ -18,6 +19,10 @@ class Driver(VISA_Driver):
         if quant.name in ('Ch1 - Data', 'Ch2 - Data', 'Ch3 - Data', 'Ch4 - Data'):
             # traces, get channel
             channel = int(quant.name[2])
+
+            while int(self.ask('BUSY?'):
+                time.sleep(0.1)
+
             # check if channel is on
             if self.getValue('Ch%d - Enabled' % channel):
                 # select channel and set # of bytes to send
