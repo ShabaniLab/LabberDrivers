@@ -20,7 +20,7 @@ class Driver(VISA_Driver):
             # traces, get channel
             channel = int(quant.name[2])
 
-            while int(self.ask('BUSY?'):
+            while int(self.ask('BUSY?')):
                 time.sleep(0.1)
 
             # check if channel is on
@@ -52,7 +52,7 @@ class Driver(VISA_Driver):
             value = VISA_Driver.performGetValue(self, quant, options)
         return value
 
-    def performSetValue(self, quant, value, options={}):
+    def performSetValue(self, quant, value, sweepRate=0.0, options={}):
         """Perform the Set Value instrument operation.
 
         """
@@ -60,10 +60,9 @@ class Driver(VISA_Driver):
             self.write('ACQ:STATE ON')
         else:
             # for all other cases, call VISA driver
-            value = VISA_Driver.performGetValue(self, quant, value, options)
+            value = VISA_Driver.performSetValue(self, quant, value, sweepRate,
+                                                options)
         return value
 
 if __name__ == '__main__':
     pass
-
-
