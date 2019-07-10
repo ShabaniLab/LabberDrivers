@@ -682,13 +682,18 @@ class Driver(VISA_Driver):
                 self._start_power_supply_driver(axis, add, model)
             else:
                 self._power_supplies[axis.lower()] = IPSPowerSupply(self, axis)
-        mode = self.getValue('Specification mode')
-        theta = self.getValue('Direction theta')
-        phi = self.getValue('Direction phi')
-        phi_offset = self.getValue('Phi offset')
-        z_offset = self.getValue('Bz offset')
-        self._create_converter(mode, theta, phi, phi_offset, z_offset)
-        self._update_fields()
+        ref_mode = self.getValue('Reference specification mode')
+        if ref_mode == 'XYZ':
+            values = (self.getValue('Direction x'),
+                      self.getValue('Direction y'),
+                      self.getValue('Direction z'))
+        elif ref_mode == 'Spherical':
+            values = (self.getValue('Direction theta'),
+                      self.getValue('Direction phi'))
+        else:
+            values = (self.getValue('Direction XZangle'),
+                      self.getValue('Direction YZangle'))
+        self._update_reference_frame(ref_mode, values)
 
     def performClose(self, bError=False, options={}):
         """Perform the close instrument connection operation.
@@ -762,14 +767,7 @@ class Driver(VISA_Driver):
             values = {k: self.getValue('Direction %s' % k)
                       for k in ('x', 'y', 'z')}
             values[q_name[-1]] = value
-            theta, phi = xyz_axis_to_angles(**values)
-            self.setValue('Direction theta', theta)
-            self.setValue('Direction phi', phi)
-            phi_offset = self.getValue('Phi offset')
-            z_offset = self.getValue('Bz offset')
-            mode = self.getValue('Specification mode')
-            self._create_converter(mode, theta, phi, phi_offset, z_offset)
-            self._update_fields()
+            self._update_reference_frame('XYZ', values)
 
         elif q_name in ('Direction theta', 'Direction phi'):
             if 'theta' in q_name:
@@ -778,14 +776,7 @@ class Driver(VISA_Driver):
             else:
                 theta = self.getValue('Direction theta')
                 phi = value
-            self.setValue('Direction x', sin(theta)*cos(phi))
-            self.setValue('Direction y', sin(theta)*sin(phi))
-            self.setValue('Direction z', cos(theta))
-            mode = self.getValue('Specification mode')
-            phi_offset = self.getValue('Phi offset')
-            z_offset = self.getValue('Bz offset')
-            self._create_converter(mode, theta, phi, phi_offset, z_offset)
-            self._update_fields()
+            self._update_reference_frame('Spherical', (theta, phi))
 
         elif q_name in ('Direction XZangle', 'Direction YZangle'):
             if 'XZangle' in q_name:
@@ -794,20 +785,7 @@ class Driver(VISA_Driver):
             else:
                 xz = self.getValue('Direction XZangle')
                 yz = value
-            xzrot = Rotation.from_euler('y', -xz, degrees=True)
-            yzrot = Rotation.from_euler('x', yz, degrees=True)
-            x, y, z = (xzrot*yzrot).apply([0, 0, 1])
-            self.setValue('Direction x', x)
-            self.setValue('Direction y', y)
-            self.setValue('Direction z', z)
-            theta, phi = xyz_axis_to_angles(x, y, z)
-            self.setValue('Direction theta', theta)
-            self.setValue('Direction phi', phi)
-            mode = self.getValue('Specification mode')
-            phi_offset = self.getValue('Phi offset')
-            z_offset = self.getValue('Bz offset')
-            self._create_converter(mode, theta, phi, phi_offset, z_offset)
-            self._update_fields()
+            self._update_reference_frame('Plane', (xz, yz))
 
         elif q_name == 'Phi offset':
             mode = self.getValue('Specification mode')
@@ -852,6 +830,7 @@ class Driver(VISA_Driver):
             targets = self._converter.from_new_basis([values[k]
                                                       for k in ('x', 'y', 'z')]
                                                      )
+            self.log('{}'.format(targets), level=1000)
             if any(t > self.getValue('Max field') for t in targets):
                 raise ValueError('The requested field is too large. Coil '
                                  'fields would be: %s' % targets)
@@ -1055,14 +1034,52 @@ class Driver(VISA_Driver):
         for k, v in self._power_supplies.items():
             real_values[k] = v.read_value()
         new_basis = self._converter.convert_from_xyz(**real_values)
-        if self.getValue('Specification mode') == 'XYZ':
+        mode = self.getValue('Specification mode')
+        if mode == 'XYZ':
             names = ('Field X', 'Field Y', 'Field Z')
-        if self.getValue('Specification mode') == 'Cylindrical':
+        elif mode == 'Cylindrical':
             names = ('Field magnitude', 'Phi', 'Field Z')
-        if self.getValue('Specification mode') == 'Spherical':
+        elif mode == 'Spherical':
             names = ('Field magnitude', 'Theta', 'Phi')
         for name, value in zip(names, new_basis):
             self.setValue(name, value)
+
+    def _update_reference_frame(self, mode, values):
+        """Update the reference frame definition in all representations.
+
+        XXX: currently the plane representation is not updated !
+
+        """
+        if mode == 'XYZ':
+            theta, phi = xyz_axis_to_angles(**values)
+            self.setValue('Direction theta', theta)
+            self.setValue('Direction phi', phi)
+        elif mode == 'Spherical':
+            theta, phi = values
+            self.setValue('Direction x', sin(theta)*cos(phi))
+            self.setValue('Direction y', sin(theta)*sin(phi))
+            self.setValue('Direction z', cos(theta))
+        elif mode == 'Plane':
+            xz, yz = values
+            xzrot = Rotation.from_euler('y', -xz, degrees=True)
+            yzrot = Rotation.from_euler('x', yz, degrees=True)
+            x, y, z = (xzrot*yzrot).apply([0, 0, 1])
+            self.setValue('Direction x', x)
+            self.setValue('Direction y', y)
+            self.setValue('Direction z', z)
+            theta, phi = xyz_axis_to_angles(x, y, z)
+            self.setValue('Direction theta', theta)
+            self.setValue('Direction phi', phi)
+        else:
+            raise ValueError('Unknown reference frame specification')
+
+        theta = self.getValue('Direction theta')
+        phi = self.getValue('Direction phi')
+        phi_offset = self.getValue('Phi offset')
+        z_offset = self.getValue('Bz offset')
+        mode = self.getValue('Specification mode')
+        self._create_converter(mode, theta, phi, phi_offset, z_offset)
+        self._update_fields()
 
     def _validate_targets(self, targets):
         max_field = self.getValue('Max field')
