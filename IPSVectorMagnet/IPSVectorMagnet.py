@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-from math import sin, cos, sqrt, atan2, acos
+import logging
+from math import sin, cos, sqrt, atan2, acos, copysign
 from threading import Thread, Event
 from multiprocessing import RLock
 from time import time, sleep
@@ -10,6 +11,12 @@ from pyvisa import ResourceManager
 
 from VISA_Driver import VISA_Driver
 
+
+logger = logging.getLogger(__name__)
+# handler = logging.FileHandler(r"C:\Users\Shabani_Lab\Documents\MagnetDebug\log.txt", mode="w")
+# handler.setLevel(logging.DEBUG)
+# logger.addHandler(handler)
+logger.critical("Test handler")
 
 class IPSPowerSupply:
     """Single axis driver for Oxford IPS.
@@ -109,13 +116,16 @@ class IPSPowerSupply:
         if self._sweeping_thread:
             self._stop_sweeping.set()
             self._sweeping_thread.join()
+        self.set_target_field(self.read_value())
         self._do_write('SET:DEV:GRP{}:PSU:ACTN:HOLD'.format(self._axis))
 
     def check_if_sweeping(self):
         """Check if the magnet is currently sweeping.
 
         """
+        logger.critical("Is axis sweeping {}".format(self._axis))
         if self._sweeping_thread and self._sweeping_thread.is_alive():
+            logger.critical("    Yes thread is alive")
             return True
         cmd = 'READ:DEV:GRP{}:PSU:SIG:FSET'.format(self._axis)
         target = float(self._do_read(cmd)[:-1])
@@ -126,7 +136,12 @@ class IPSPowerSupply:
             # check that power supply is in hold mode
             if status == 'HOLD':
                 return False
-        return True
+            else:
+                logger.critical("    Yes status is not HOLD.")
+                return True
+        else:
+            logger.critical("    Yes target not within tolerances (target: {}), value: {}".format(target, current_value))
+            return True
 
     def _do_write(self, msg):
         """Write a value to the Oxford IPS.
@@ -530,7 +545,7 @@ class CylindricalConverter(Converter):
         # time)
         x_vals = state[0]*np.cos(phis)[1:]
         y_vals = state[0]*np.sin(phis)[1:]
-        z_vals = np.zeros_like(phis)[1:]
+        z_vals = state[2]*np.ones_like(phis)[1:]
 
         # We keep the rate to set at the beginning of each time interval
         x_rate = -rate*state[0]*np.sin(phis)[:-1]
@@ -682,18 +697,13 @@ class Driver(VISA_Driver):
                 self._start_power_supply_driver(axis, add, model)
             else:
                 self._power_supplies[axis.lower()] = IPSPowerSupply(self, axis)
-        ref_mode = self.getValue('Reference specification mode')
-        if ref_mode == 'XYZ':
-            values = (self.getValue('Direction x'),
-                      self.getValue('Direction y'),
-                      self.getValue('Direction z'))
-        elif ref_mode == 'Spherical':
-            values = (self.getValue('Direction theta'),
-                      self.getValue('Direction phi'))
-        else:
-            values = (self.getValue('Direction XZangle'),
-                      self.getValue('Direction YZangle'))
-        self._update_reference_frame(ref_mode, values)
+        mode = self.getValue('Specification mode')
+        theta = self.getValue('Direction theta')
+        phi = self.getValue('Direction phi')
+        phi_offset = self.getValue('Phi offset')
+        z_offset = self.getValue('Bz offset')
+        self._create_converter(mode, theta, phi, phi_offset, z_offset)
+        self._update_fields()
 
     def performClose(self, bError=False, options={}):
         """Perform the close instrument connection operation.
@@ -721,7 +731,7 @@ class Driver(VISA_Driver):
                       'Power supply Z axis: VISA address'):
             axis = q_name[13]
             model = self.getValue('Power supply %s axis: Model' % axis)
-            if value and model:
+            if value and value != quant.value and model:
                 self._start_power_supply_driver(axis, value, model)
             else:
                 supply = self._power_supplies[axis.lower()]
@@ -734,7 +744,7 @@ class Driver(VISA_Driver):
                         'Power supply Z axis: Model'):
             axis = q_name[13]
             add = self.getValue('Power supply %s axis: VISA address' % axis)
-            if value and model:
+            if value and value != quant.value and add:
                 self._start_power_supply_driver(axis, add, value)
             else:
                 supply = self._power_supplies[axis.lower()]
@@ -767,7 +777,14 @@ class Driver(VISA_Driver):
             values = {k: self.getValue('Direction %s' % k)
                       for k in ('x', 'y', 'z')}
             values[q_name[-1]] = value
-            self._update_reference_frame('XYZ', values)
+            theta, phi = xyz_axis_to_angles(**values)
+            self.setValue('Direction theta', theta)
+            self.setValue('Direction phi', phi)
+            phi_offset = self.getValue('Phi offset')
+            z_offset = self.getValue('Bz offset')
+            mode = self.getValue('Specification mode')
+            self._create_converter(mode, theta, phi, phi_offset, z_offset)
+            self._update_fields()
 
         elif q_name in ('Direction theta', 'Direction phi'):
             if 'theta' in q_name:
@@ -776,7 +793,14 @@ class Driver(VISA_Driver):
             else:
                 theta = self.getValue('Direction theta')
                 phi = value
-            self._update_reference_frame('Spherical', (theta, phi))
+            self.setValue('Direction x', sin(theta)*cos(phi))
+            self.setValue('Direction y', sin(theta)*sin(phi))
+            self.setValue('Direction z', cos(theta))
+            mode = self.getValue('Specification mode')
+            phi_offset = self.getValue('Phi offset')
+            z_offset = self.getValue('Bz offset')
+            self._create_converter(mode, theta, phi, phi_offset, z_offset)
+            self._update_fields()
 
         elif q_name in ('Direction XZangle', 'Direction YZangle'):
             if 'XZangle' in q_name:
@@ -785,7 +809,20 @@ class Driver(VISA_Driver):
             else:
                 xz = self.getValue('Direction XZangle')
                 yz = value
-            self._update_reference_frame('Plane', (xz, yz))
+            xzrot = Rotation.from_euler('y', -xz, degrees=True)
+            yzrot = Rotation.from_euler('x', yz, degrees=True)
+            x, y, z = (xzrot*yzrot).apply([0, 0, 1])
+            self.setValue('Direction x', x)
+            self.setValue('Direction y', y)
+            self.setValue('Direction z', z)
+            theta, phi = xyz_axis_to_angles(x, y, z)
+            self.setValue('Direction theta', theta)
+            self.setValue('Direction phi', phi)
+            mode = self.getValue('Specification mode')
+            phi_offset = self.getValue('Phi offset')
+            z_offset = self.getValue('Bz offset')
+            self._create_converter(mode, theta, phi, phi_offset, z_offset)
+            self._update_fields()
 
         elif q_name == 'Phi offset':
             mode = self.getValue('Specification mode')
@@ -818,8 +855,9 @@ class Driver(VISA_Driver):
             return value
 
         mode = self.getValue('Specification mode')
-        max_rates = self._get_max_rates()
         rate = sweepRate
+        times = None
+        logger.critical("Setting {}".format(q_name))
         if mode == 'XYZ':
             if q_name not in ('Field X', 'Field Y', 'Field Z'):
                 raise KeyError()
@@ -830,18 +868,12 @@ class Driver(VISA_Driver):
             targets = self._converter.from_new_basis([values[k]
                                                       for k in ('x', 'y', 'z')]
                                                      )
-            self.log('{}'.format(targets), level=1000)
             if any(t > self.getValue('Max field') for t in targets):
                 raise ValueError('The requested field is too large. Coil '
                                  'fields would be: %s' % targets)
             rates = [0, 0, 0]
             rates[['X', 'Y', 'Z'].index(q_name[-1])] = rate
             rates = self._converter.from_new_basis(rates, no_offset=True)
-            self._validate_rates(rates, max_rates)
-
-            for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
-                psu = self._power_supplies[axis]
-                psu.start_sweep(t, r)
 
         elif mode == 'Cylindrical':
             if q_name not in ('Field magnitude', 'Phi', 'Field Z'):
@@ -859,12 +891,7 @@ class Driver(VISA_Driver):
                 times, targets, rates =\
                     self._converter.convert_rate_to_xyz_rates(key, rate,
                                                               state, value)
-                self._validate_rates(rates, max_rates)
-                self._validate_targets(targets)
 
-                for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
-                    psu = self._power_supplies[axis]
-                    psu.start_sweep(t, r, times)
             else:
                 values = {k: v for k, v in zip(('r', 'phi', 'z'), state)}
                 values[key] = value
@@ -873,15 +900,9 @@ class Driver(VISA_Driver):
                                                      for k in ('r', 'phi', 'z')
                                                      ]
                                                     )
-                self._validate_targets(targets)
 
                 rates = self._converter.convert_rate_to_xyz_rates(key, rate,
                                                                   state)
-                self._validate_rates(rates, max_rates)
-
-                for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
-                    psu = self._power_supplies[axis]
-                    psu.start_sweep(t, r)
 
         else:
             if q_name not in ('Field magnitude', 'Theta', 'Phi'):
@@ -899,31 +920,18 @@ class Driver(VISA_Driver):
                 times, targets, rates =\
                     self._converter.convert_rate_to_xyz_rates(key, rate,
                                                               state, value)
-                self._validate_targets(targets)
-                self._validate_rates(rates, max_rates)
-
-                for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
-                    psu = self._power_supplies[axis]
-                    psu.start_sweep(t, r, times)
             else:
-
                 # Determine the target value
                 values = {k: v for k, v in zip(('r', 'theta', 'phi'), state)}
                 values[key] = value
                 vec = [values[k] for k in ('r', 'theta', 'phi') ]
                 targets = self._converter.convert_to_xyz(*vec)
 
-                # Check that we respect the magnet bound
-                self._validate_targets(targets)
-
                 # Compute the rates for each axis
                 rates = self._converter.convert_rate_to_xyz_rates(key, rate,
                                                                   state)
-                self._validate_rates(rates, max_rates)
 
-                for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
-                    psu = self._power_supplies[axis]
-                    psu.start_sweep(t, r)
+        self._sweep_all_axis(targets, rates, times)
 
         return value
 
@@ -982,12 +990,43 @@ class Driver(VISA_Driver):
             raise KeyError('Unknown quantity: %s' % q_name)
 
     def checkIfSweeping(self, quant, options={}):
-        return any(supply.check_if_sweeping()
-                   for supply in self._power_supplies.values())
+        sweeping = {axis: supply.check_if_sweeping()
+                    for axis, supply in self._power_supplies.items()}
+        for a, val in sweeping.items():
+            logger.critical("Axis {} sweeping: {}".format(a, val))
+        return any(sweeping.values())
 
     def performStopSweep(self, quant, options={}):
         for supply in self._power_supplies.values():
             supply.stop_sweep()
+
+    def _sweep_all_axis(self, targets, rates, times):
+        """Sweep all three physical axis to reach the targets.
+
+        If any axis is already at the target value do not start a sweep.
+
+        """
+        # Validate the targets
+        self._validate_targets(targets)
+
+        # Enforce minimum rates and validate them
+        max_rates = self._get_max_rates()
+        for i, v in enumerate(rates):
+            if isinstance(v, float) and abs(v) < 1e-4:
+                rates[i] = copysign(1e-4, v)
+        self._validate_rates(rates, max_rates)
+        logger.critical("sweep targets: {}, rates: {}".format(targets, rates))
+
+        # Read current values
+        real_values = {}
+        for k, v in self._power_supplies.items():
+            real_values[k] = v.read_value()
+
+        for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
+            if isinstance(t, float) and abs(t - real_values[axis]) < 1e-4:  # Instrument resolution
+                continue
+            psu = self._power_supplies[axis]
+            psu.start_sweep(t, r, times)
 
     def _get_max_rates(self):
         """Get the maximum rates of the coil.
@@ -1034,52 +1073,14 @@ class Driver(VISA_Driver):
         for k, v in self._power_supplies.items():
             real_values[k] = v.read_value()
         new_basis = self._converter.convert_from_xyz(**real_values)
-        mode = self.getValue('Specification mode')
-        if mode == 'XYZ':
+        if self.getValue('Specification mode') == 'XYZ':
             names = ('Field X', 'Field Y', 'Field Z')
-        elif mode == 'Cylindrical':
+        if self.getValue('Specification mode') == 'Cylindrical':
             names = ('Field magnitude', 'Phi', 'Field Z')
-        elif mode == 'Spherical':
+        if self.getValue('Specification mode') == 'Spherical':
             names = ('Field magnitude', 'Theta', 'Phi')
         for name, value in zip(names, new_basis):
             self.setValue(name, value)
-
-    def _update_reference_frame(self, mode, values):
-        """Update the reference frame definition in all representations.
-
-        XXX: currently the plane representation is not updated !
-
-        """
-        if mode == 'XYZ':
-            theta, phi = xyz_axis_to_angles(**values)
-            self.setValue('Direction theta', theta)
-            self.setValue('Direction phi', phi)
-        elif mode == 'Spherical':
-            theta, phi = values
-            self.setValue('Direction x', sin(theta)*cos(phi))
-            self.setValue('Direction y', sin(theta)*sin(phi))
-            self.setValue('Direction z', cos(theta))
-        elif mode == 'Plane':
-            xz, yz = values
-            xzrot = Rotation.from_euler('y', -xz, degrees=True)
-            yzrot = Rotation.from_euler('x', yz, degrees=True)
-            x, y, z = (xzrot*yzrot).apply([0, 0, 1])
-            self.setValue('Direction x', x)
-            self.setValue('Direction y', y)
-            self.setValue('Direction z', z)
-            theta, phi = xyz_axis_to_angles(x, y, z)
-            self.setValue('Direction theta', theta)
-            self.setValue('Direction phi', phi)
-        else:
-            raise ValueError('Unknown reference frame specification')
-
-        theta = self.getValue('Direction theta')
-        phi = self.getValue('Direction phi')
-        phi_offset = self.getValue('Phi offset')
-        z_offset = self.getValue('Bz offset')
-        mode = self.getValue('Specification mode')
-        self._create_converter(mode, theta, phi, phi_offset, z_offset)
-        self._update_fields()
 
     def _validate_targets(self, targets):
         max_field = self.getValue('Max field')
