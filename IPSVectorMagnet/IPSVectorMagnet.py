@@ -758,6 +758,10 @@ class Driver(VISA_Driver):
             # representations agree
             pass
 
+        elif q_name == 'Ramping mode':
+            # Nothing to change here it is just a software parameter
+            pass
+
         elif q_name in ('Direction x', 'Direction y', 'Direction z'):
             values = {k: self.getValue('Direction %s' % k)
                       for k in ('x', 'y', 'z')}
@@ -855,9 +859,16 @@ class Driver(VISA_Driver):
             if any(t > self.getValue('Max field') for t in targets):
                 raise ValueError('The requested field is too large. Coil '
                                  'fields would be: %s' % targets)
-            rates = [0, 0, 0]
-            rates[['X', 'Y', 'Z'].index(q_name[-1])] = rate
-            rates = self._converter.from_new_basis(rates, no_offset=True)
+
+            # In fast ramping mode we use either the specified rate on all axis
+            # This limit us to the slowest rate but it should not be a concern.
+            if self.getValue('Ramping mode') == 'Fast between point':
+                rates = [rate]*3
+            else:
+                rates = [0, 0, 0]
+                rates[['X', 'Y', 'Z'].index(q_name[-1])] = rate
+                rates = self._converter.from_new_basis(rates, no_offset=True)
+
             self._validate_rates(rates, max_rates)
 
             for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
@@ -880,6 +891,12 @@ class Driver(VISA_Driver):
                 times, targets, rates =\
                     self._converter.convert_rate_to_xyz_rates(key, rate,
                                                               state, value)
+
+                # In fast ramping mode we use the maximum rate determine on one
+                # axis on all axis to speed up the process.
+                if self.getValue('Ramping mode') == 'Fast between point':
+                    rates = [max(rates)]*3
+
                 self._validate_rates(rates, max_rates)
                 self._validate_targets(targets)
 
@@ -896,8 +913,12 @@ class Driver(VISA_Driver):
                                                     )
                 self._validate_targets(targets)
 
-                rates = self._converter.convert_rate_to_xyz_rates(key, rate,
-                                                                  state)
+                rates = self._converter.convert_rate_to_xyz_rates(key, rate, state)
+                # In fast ramping mode we use the maximum rate determine on one
+                # axis on all axis to speed up the process.
+                if self.getValue('Ramping mode') == 'Fast between point':
+                    rates = [max(rates)]*3
+
                 self._validate_rates(rates, max_rates)
 
                 for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
@@ -921,6 +942,12 @@ class Driver(VISA_Driver):
                     self._converter.convert_rate_to_xyz_rates(key, rate,
                                                               state, value)
                 self._validate_targets(targets)
+
+                # In fast ramping mode we use the maximum rate determine on one
+                # axis on all axis to speed up the process.
+                if self.getValue('Ramping mode') == 'Fast between point':
+                    rates = [max(rates)]*3
+
                 self._validate_rates(rates, max_rates)
 
                 for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
@@ -937,9 +964,11 @@ class Driver(VISA_Driver):
                 # Check that we respect the magnet bound
                 self._validate_targets(targets)
 
-                # Compute the rates for each axis
-                rates = self._converter.convert_rate_to_xyz_rates(key, rate,
-                                                                  state)
+                rates = self._converter.convert_rate_to_xyz_rates(key, rate, state)
+                # In fast ramping mode we use the maximum rate determine on one
+                # axis on all axis to speed up the process.
+                if self.getValue('Ramping mode') == 'Fast between point':
+                    rates = [max(rates)]*3
                 self._validate_rates(rates, max_rates)
 
                 for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
@@ -988,6 +1017,7 @@ class Driver(VISA_Driver):
                       'Field magnitude rate',
                       'Theta rate',
                       'Phi rate',
+                      'Ramping mode',
                       ):
             return quant.getValue()
 
