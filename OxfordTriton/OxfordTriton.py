@@ -38,13 +38,13 @@ class Driver(VISA_Driver):
                 " 'Initial TritonAPI user access level' registry to GUEST."
             )
         answer = self.askAndLog("READ:SYS:DR:CHAN:COOL", False)
-        if not answer.endswith("VALID"):
+        if answer.endswith("INVALID"):
             raise RuntimeError(f"Unexpected answer {answer}")
-        self._uids["MC Cernox"] = answer.rsplit(":", 2)[1]
+        self._uids["MC Cernox"] = answer.rsplit(":", 1)[1]
         answer = self.askAndLog("READ:SYS:DR:CHAN:MC", False)
-        if not answer.endswith("VALID"):
+        if answer.endswith("INVALID"):
             raise RuntimeError(f"Unexpected answer {answer}")
-        self._uids["MC RuOx"] = answer.rsplit(":", 2)[1]
+        self._uids["MC RuOx"] = answer.rsplit(":", 1)[1]
 
     def performGetValue(self, quant, options={}):
         """Perform the Get Value instrument operation
@@ -62,7 +62,7 @@ class Driver(VISA_Driver):
                 f"The Triton failed to answer to {get_cmd}, answer was {answer}"
             )
         # Extract the numeric answer with its unit
-        quantity = answer.rsplit(":", 2)[1]
+        quantity = answer.rsplit(":", 1)[1]
         if quantity.lower() in ("on", "off"):
             return quantity
 
