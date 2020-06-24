@@ -13,7 +13,9 @@ from VISA_Driver import VISA_Driver
 
 
 logger = logging.getLogger(__name__)
-# handler = logging.FileHandler(r"C:\Users\Shabani_Lab\Documents\MagnetDebug\log.txt", mode="w")
+# handler = logging.FileHandler(
+#     r"C:\Users\Shabani_Lab\Documents\MagnetDebug\log.txt", mode="w"
+# )
 # handler.setLevel(logging.DEBUG)
 # logger.addHandler(handler)
 logger.critical("Test handler")
@@ -332,7 +334,9 @@ class Keithley2450(CustomPowerSupply):
             # we update the value of the output every 100 ms
             if rate == 0.0:
                 return
-            step_number = int(round(np.abs((target - current) / (rate * interval)))) + 1
+            # We need at least 2 point to get both the initial and the final value
+            # in the least of values
+            step_number = int(round(np.abs((target - current) / (rate * interval)))) + 2
             values = np.linspace(current, target, step_number)
             times = np.linspace(0, interval * (step_number - 1), step_number)
         elif len(times) == 1:
@@ -1030,7 +1034,7 @@ class Driver(VISA_Driver):
         resolutions = self._get_sweep_resolutions()
         for i, (rate, resolution) in enumerate(zip(rates, resolutions)):
             if isinstance(rate, float) and abs(rate) < resolution:
-                rates[i] = copysign(resolution, v)
+                rates[i] = copysign(resolution, rate)
         self._validate_rates(rates, max_rates)
         logger.critical("sweep targets: {}, rates: {}".format(targets, rates))
 
@@ -1046,7 +1050,11 @@ class Driver(VISA_Driver):
             if (
                 isinstance(target, float)
                 and abs(target - real_values[axis]) < resolution
-            ):  # Instrument resolution
+            ):
+                logger.critical(
+                    "Skipping axis %s, target %e, value %e"
+                    % (axis, target, real_values[axis])
+                )
                 continue
             psu = self._power_supplies[axis]
             psu.start_sweep(target, rate, times)
