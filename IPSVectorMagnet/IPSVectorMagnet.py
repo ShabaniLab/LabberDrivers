@@ -1048,7 +1048,7 @@ class Driver(VISA_Driver):
         max_rates = self._get_max_rates()
         resolutions = self._get_sweep_resolutions()
         for i, (rate, resolution) in enumerate(zip(rates, resolutions)):
-            if isinstance(v, float) and abs(v) < resolution:
+            if isinstance(rate, float) and abs(rate) < resolution:
                 rates[i] = copysign(resolution, v)
         self._validate_rates(rates, max_rates)
         logger.critical("sweep targets: {}, rates: {}".format(targets, rates))
