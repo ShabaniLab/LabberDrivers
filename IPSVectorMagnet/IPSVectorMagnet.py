@@ -1065,7 +1065,10 @@ class Driver(VISA_Driver):
         """Get the maximum resolution on each axes.
 
         """
-        return tuple(p.sweep_resolution for p in self._power_supplies.items())
+        return tuple(
+            self._power_supplies[k].sweep_resolution
+            for k in sorted(self._power_supplies)
+        )
 
     def _start_power_supply_driver(self, axis, address, model):
         """Start a power supply driver.
