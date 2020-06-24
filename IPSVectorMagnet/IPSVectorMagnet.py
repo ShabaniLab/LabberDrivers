@@ -127,20 +127,16 @@ class IPSPowerSupply:
         if self._sweeping_thread and self._sweeping_thread.is_alive():
             logger.critical("    Yes thread is alive")
             return True
-        cmd = 'READ:DEV:GRP{}:PSU:SIG:FSET'.format(self._axis)
-        target = float(self._do_read(cmd)[:-1])
-        current_value = self.read_value()
-        if abs(target - current_value) < self.sweep_resolution:
-            status = self._do_read('READ:DEV:GRP{}:PSU:ACTN'.format(self._axis)
-                                   )
-            # check that power supply is in hold mode
-            if status == 'HOLD':
-                return False
-            else:
-                logger.critical("    Yes status is not HOLD.")
-                return True
+        # Rely only on the status to determine if we are sweeping
+        # Checking the field value is a bad idea since it does not reflect if 
+        # we are sweeping or not.
+        status = self._do_read('READ:DEV:GRP{}:PSU:ACTN'.format(self._axis)
+                                )
+        # check that power supply is in hold mode
+        if status == 'HOLD':
+            return False
         else:
-            logger.critical("    Yes target not within tolerances (target: {}), value: {}".format(target, current_value))
+            logger.critical("    Yes status is not HOLD.")
             return True
 
     def _do_write(self, msg):
@@ -251,6 +247,13 @@ class CustomPowerSupply:
         """
         raise NotImplementedError
 
+    @property
+    def sweep_resolution(self):
+        """Provide the sweep resolution for the axis.
+
+        """
+        raise NotImplementedError
+
 
 class Keithley2450(CustomPowerSupply):
     """Driver to use a Keithley 2450 as a magnet power supply
@@ -277,6 +280,11 @@ class Keithley2450(CustomPowerSupply):
         self._stop_sweeping = Event()
         self._curr_val = 0
 
+    @property
+    def sweep_resolution(self):
+        """Keithley lowest resolution is 10 micro A"""
+        return 1e-5/self.conversion_factor
+
     def read_value(self):
         """Read the current output current and convert.
 
@@ -296,7 +304,7 @@ class Keithley2450(CustomPowerSupply):
                 self._driver.read_termination = '\n'
                 return self.read_value()
 
-    def start_sweep(self, target, rate, times=None, slave=False):
+    def start_sweep(self, target, rate, times=None):
         """Start a sweep managed by the computer for simplicity.
 
         Parameters
@@ -314,12 +322,6 @@ class Keithley2450(CustomPowerSupply):
         # Convert the rate in T/s
         rate /= 60.0/0.995 # taking into account a weird drift
         interval = 0.1  # Time interval between values update
-
-        if slave:
-            self._stop_sweeping.clear()
-            self._sweeping_thread = Thread(target=self._update_slave_output,
-                                           args=(times, values))
-            self._sweeping_thread.start()
 
         if times is None:
             # we update the value of the output every 100 ms
@@ -1009,11 +1011,12 @@ class Driver(VISA_Driver):
         # Validate the targets
         self._validate_targets(targets)
 
-        # Enforce minimum rates and validate them
+        # Enforce minimum rates (max_resolution/s) and validate them
         max_rates = self._get_max_rates()
-        for i, v in enumerate(rates):
-            if isinstance(v, float) and abs(v) < 1e-4:
-                rates[i] = copysign(1e-4, v)
+        resolutions = self._get_sweep_resolutions()
+        for i, (rate, resolution) in enumerate(zip(rates, resolutions)):
+            if isinstance(v, float) and abs(v) < resolution:
+                rates[i] = copysign(resolution, v)
         self._validate_rates(rates, max_rates)
         logger.critical("sweep targets: {}, rates: {}".format(targets, rates))
 
@@ -1022,11 +1025,12 @@ class Driver(VISA_Driver):
         for k, v in self._power_supplies.items():
             real_values[k] = v.read_value()
 
-        for axis, t, r in zip(('x', 'y', 'z'), targets, rates):
-            if isinstance(t, float) and abs(t - real_values[axis]) < 1e-4:  # Instrument resolution
+        for axis, target, rate, resolution in zip(('x', 'y', 'z'), targets, rates, resolutions):
+            # Do not sweep if we not have the resolution to do so
+            if isinstance(target, float) and abs(target - real_values[axis]) < resolution:  # Instrument resolution
                 continue
             psu = self._power_supplies[axis]
-            psu.start_sweep(t, r, times)
+            psu.start_sweep(target, rate, times)
 
     def _get_max_rates(self):
         """Get the maximum rates of the coil.
@@ -1035,6 +1039,12 @@ class Driver(VISA_Driver):
         return (self.getValue('Max rate: X'),
                 self.getValue('Max rate: Y'),
                 self.getValue('Max rate: Z'))
+
+    def _get_sweep_resolutions(self):
+        """Get the maximum resolution on each axes.
+
+        """
+        return tuple(p.sweep_resolution for p in self._power_supplies.items())
 
     def _start_power_supply_driver(self, axis, address, model):
         """Start a power supply driver.
