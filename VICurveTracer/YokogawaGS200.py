@@ -14,7 +14,7 @@ RAMP_TEMPLATE = (
 )
 
 
-class Driver(BiasGenerator):
+class Driver:
     """Yokogawa GS200 as bias generator.
 
     """

@@ -3,10 +3,10 @@ from pyvisa import util
 
 import numpy as np
 
-from VICurveTracer import VoltMeter
+# from VICurveTracer import VoltMeter
 
 
-class Driver(VoltMeter):
+class Driver:
     """Keithley 2000 as VICurveTracer volt-meter.
 
     """
