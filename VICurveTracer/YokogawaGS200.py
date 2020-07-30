@@ -1,5 +1,17 @@
 import pyvisa
+from typing import List, Tuple
+
 from VICurveTracer import BiasGenerator
+
+RAMP_TEMPLATE = (
+    "*CLS;"
+    ":PROG:REP 0;"
+    "SLOP {sweep_time:.1f};INT {sweep_time:.1f};"
+    "EDIT:STAR;"
+    ":SOUR:LEV {value:.6E};"
+    ":PROG:EDIT:END;"
+    ":PROG:RUN"
+)
 
 
 class Driver(BiasGenerator):
@@ -14,12 +26,17 @@ class Driver(BiasGenerator):
         )
         self._ramps = []
         if rsc.query(":SOUR:FUNC?") != "VOLT":
-            raise RuntimeError(f"Yokogawa GS200 ({addres}) is not in voltage mode.")
+            raise RuntimeError(f"Yokogawa GS200 ({address}) is not in voltage mode.")
         if rsc.query(":OUTP?") != "1":
             raise RuntimeError(f"Yokogawa GS200 ({address}) output is off.")
 
+        # Guard indicated we started a program and hance checking if it is
+        # complete make sense
+        self._maybe_ramping = False
+
         # Direct the signal marking the beginning of a program execution the
         # rear BNC output
+        rsc.clear()
         rsc.write(":ROUT:BNCO TRIG")
 
     def close(self):
@@ -45,7 +62,7 @@ class Driver(BiasGenerator):
         """Get the current value of the output.
 
         """
-        return float(rsc.query(":SOUR:LEV?"))
+        return float(self._rsc.query(":SOUR:LEV?"))
 
     def goto_value(self, value, slope):
         """Go to the specified value immediately.
@@ -55,10 +72,8 @@ class Driver(BiasGenerator):
         curr_value = self.current_value()
         # Program cannot be shorter than 0.1
         sweep_time = max(abs(value - curr_value) / slope, 0.1)
-        rsc.write(
-            f"*CLS;:PROG:REP 0;SLOP {sweep_time:.1f};INT {sweep_time:.1f};"
-            f"EDIT:STAR;:SOUR:LEV {value:.6E};:PROG:EDIT END;:PROG:RUN"
-        )
+        rsc.write(RAMP_TEMPLATE.format(sweep_time=sweep_time, value=value))
+        self._maybe_ramping = True
 
     def prepare_ramps(self, ramps: List[Tuple[float, float, float]]):
         """Prepare ramps by creating a program executing them in series.
@@ -74,22 +89,35 @@ class Driver(BiasGenerator):
             sweep_time = abs(start - stop) / slope
             if sweep_time < 0.1:
                 raise ValueError("GS200 sweeps must be at least 100ms long.")
-                progs.append(
-                    f"*CLS;:PROG:REP 0;SLOP {sweep_time:.1f};INT {sweep_time:.1f};"
-                    f"EDIT:STAR;:SOUR:LEV {value:.6E};:PROG:EDIT END;:PROG RUN"
-                )
+            progs.append(RAMP_TEMPLATE.format(sweep_time=sweep_time, value=stop))
         self._ramps = progs
 
     def start_ramp(self, index):
         """Start the specified ramp.
 
         """
-        self.write(self._ramps[index])
+        self._rsc.write(self._ramps[index])
+        self._maybe_ramping = True
 
-    def is_ramping(self, index):
+    def is_ramping(self):
         """Check is the program is done executing.
 
         """
-        # Check for bit 7 EOP (End of program) in the extended event register
-        # We are not ramping if the bit is set
-        return (int(self.query(":STAT:EVEN?")) & 128) == 0
+        if self._maybe_ramping:
+            # Check for bit 7 EOP (End of program) in the extended event register
+            # We are not ramping if the bit is set
+            ramping = (int(self._rsc.query(":STAT:EVEN?")) & 128) == 0
+            self._maybe_ramping = ramping
+            return ramping
+        else:
+            return False
+
+
+# Can used for debugging by commenting the import of BiasSource
+if __name__ == "__main__":
+    y = Driver("GPIB::13::INSTR")
+    try:
+        print(y.is_ramping())
+        y.goto_value(-1, 10)
+    finally:
+        y.close()
