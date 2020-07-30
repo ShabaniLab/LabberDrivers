@@ -1,4 +1,6 @@
 import pyvisa
+from pyvisa import util
+
 import numpy as np
 
 from VICurveTracer import VoltMeter
@@ -16,6 +18,7 @@ class Driver(VoltMeter):
             address, write_termination="\n", read_termination="\n"
         )
         # Disable auto-ranging
+        rsc.clear()
         rsc.write(":VOLT:DC:RANG:AUTO 0")
 
     def close(self):
@@ -67,28 +70,33 @@ class Driver(VoltMeter):
         """
         if value not in (6, 60, 600, 6000):
             raise ValueError("Invalid range specified.")
-        resp = self._rsc.query(f":VOLT:DC:NPLC? {value/60:.2f};:VOLT:DC:NPLC?")
+        resp = self._rsc.query(f":VOLT:DC:NPLC {value/60:.2f};:VOLT:DC:NPLC?")
         if float(resp) * 60 != value:
             raise RuntimeError(
                 f"Failed to set range (after setting value is {float(resp)*60},"
                 f"expected {value}"
             )
 
-    def prepare_acquistion(self, points):
+    def prepare_acquisition(self, points):
         """Prepare the device to measure a series of points.
 
         """
         if points > 1024:
             raise ValueError("Keithley 2000 is limited to 1024 points.")
-        self._points = points
+        self._points = points = int(points)
         rsc = self._rsc
         # Ensure the continuous triggering is disabled
         rsc.write(":INIT:CONT 0")
-        # Set the number of points (in the buffer and to acquire for a trigger)
-        # the data format, the trigger source, the points origin
         rsc.write(
-            f":DATA:POIN {points:d};:SAMP:COUN {points:d};:DATA:FORM DREAL;"
-            ":TRIG:SOUR EXT;:TRIG:COUN 1;:DATA:FEED SENS1"
+            f":DATA:POIN {points:d};"  # Number of points in the buffer
+            f":SAMP:COUN {points:d};"  # Number of points to acquire on a trigger
+            ":FORM:DATA DREAL;"  # Data format
+            ":TRIG:SOUR EXT;"  # Trigger source
+            ":TRIG:COUN 1;"  # Number of trigger to expect
+            ":TRIG:DEL 0;"  # No trigger delay
+            ":DATA:FEED SENS1;"  # Origin of the data
+            ":VOLT:AVER:STAT 0"  # Disable filtering
+            ":DISP:ENAB 0"  # Turn display off
         )
 
     def arm_device(self):
@@ -97,21 +105,41 @@ class Driver(VoltMeter):
         """
         rsc = self._rsc
         # Clear the status register as otherwise the service request will fail
-        rsc.query(":STAT:MEAS?")
+        rsc.write(":STATUS:PRESET;*CLS")
         # Clear the buffer, enable service request on buffer full, enable buffer
         # storage.
-        self.write(":TRAC:CLE;:STAT:MEAS:ENAB 512;*SRE 1;:DATA:FEED:CONT NEXT")
+        rsc.write(":TRAC:CLE;:STAT:MEAS:ENAB 512;*SRE 1;:DATA:FEED:CONT NEXT;:INIT")
 
     def wait_for_data_ready(self):
         """Retrive the data collected after a trigger is received.
 
         """
-        self._rsc.wait_for_srq(timeout=1200000)
+        self._rsc.wait_for_srq(timeout=60000)
 
     def retrieve_data(self):
         """Retrive the data collected after a trigger is received.
 
         """
-        return self._rsc.query_binary_values(
-            ":DATA:DATA?", "d", container=np.ndarray, data_points=self._points,
+        self._rsc.write(":DISP:ENAB 1")  # Turn display on
+        self._rsc.write(":DATA:DATA?")
+        block = self._rsc.read_bytes(self._points * 8 + 3)
+
+        return util.from_binary_block(
+            block, 2, self._points * 8, "d", False, np.ndarray
         )
+
+
+# Can used for debugging by commenting the import of BiasSource
+# if __name__ == "__main__":
+#     k = Driver("GPIB::16::INSTR")
+#     try:
+#         k.prepare_acquisition(201)
+#         k.arm_device()
+#         print(k._rsc.query(":SAMP:COUN?"))
+#         k.wait_for_data_ready()
+#         # from time import sleep
+
+#         # sleep(10)
+#         print(k.retrieve_data())
+#     finally:
+#         k.close()
