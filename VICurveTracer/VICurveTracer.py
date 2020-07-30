@@ -10,7 +10,14 @@ from typing import List, Tuple
 import numpy as np
 
 import InstrumentDriver
-from pyvisa import ResourceManager
+
+logger = logging.getLogger(__name__)
+handler = logging.FileHandler(
+    r"C:\Users\Shabani_Lab\Documents\MagnetDebug\log.txt", mode="w"
+)
+handler.setLevel(logging.DEBUG)
+logger.addHandler(handler)
+logger.critical("Test handler")
 
 
 class BiasGenerator:
@@ -73,7 +80,7 @@ class VoltMeter:
     def __init__(self, address):
         pass
 
-    def close():
+    def close(self):
         pass
 
     def list_ranges(self):
@@ -127,7 +134,7 @@ class VoltMeter:
         pass
 
 
-class Driver(VISA_Driver):
+class Driver(InstrumentDriver.InstrumentWorker):
     """ This class implements the VICurveTracer driver.
 
     This assumes that the source will trigger the meter when starting a ramp.
@@ -139,32 +146,39 @@ class Driver(VISA_Driver):
         self._source: BiasGenerator = None
         self._meter: VoltMeter = None
         self._lock = RLock()
-        self._source_extrema = 0
-        self._source_reset_rate = 1
-        self._source_load_resistance = 1e6
-        self._dmm_points = 601
+        # The first and last points tend to be useless so take more points
+        # on each side and discard those
+        # The padding is calculated based on the number of points
+        self._padding_points = 1
 
     def performOpen(self, options={}):
         """Perform the operation of opening the instrument connection.
 
         """
-        s_model = self.getValue("Source: model")
-        s_add = self.getValue("Source: VISA address")
-        cls = importlib.import_module(s_model).Driver
-        self._source = cls(s_add)
-        ext = self.getValue("Source: extrema")
-        re_rate = self.getValue("Source: reset rate")
-        points = self.getValue("DMM: number of points")
-        ac_rate = self.getValue("DMM: acquisition rate")
-        self._source.prepare_ramps(
-            [(-value, value, 2 * value * points / ac_rate,), (value, -value, re_rate),]
-        )
+        super().performOpen(options)
+        with self._lock:
+            # Start the source
+            s_model = self.getValue("Source: Model")
+            s_add = self.getValue("Source: VISA address")
+            cls = importlib.import_module(s_model).Driver
+            self._source = cls(s_add)
 
-        m_model = self.getValue("DMM: model")
-        m_add = self.getValue("DMM: VISA address")
-        cls = importlib.import_module(m_model).Driver
-        self._meter = cls(m_add)
-        self._meter.prepare_acquistion(self.getValue("DMM: number of points"))
+            # Start the meter
+            m_model = self.getValue("DMM: Model")
+            m_add = self.getValue("DMM: VISA address")
+            cls = importlib.import_module(m_model).Driver
+            self._meter = cls(m_add)
+
+            ext = self.getValue("Source: extrema")
+            re_rate = self.getValue("Source: reset rate")
+            points = int(self.getValue("DMM: number of points"))
+            self._padding_points = (points - 1) // 20
+            ac_rate = self.readValueFromOther("DMM: acquisition rate")
+
+            # Center the points in the window of acquisition and add padding
+            self._prepare_ramp(ext, points, ac_rate, re_rate)
+
+            self._meter.prepare_acquisition(points + 2 * self._padding_points)
 
     def performClose(self, bError=False, options={}):
         """Perform the close instrument connection operation.
@@ -181,7 +195,7 @@ class Driver(VISA_Driver):
         """
         q_name = quant.name
         update_ramps = False
-        ext, points, ac_rate, re_rate = None
+        ext = points = ac_rate = re_rate = None
 
         if q_name in ("Source: VISA address", "DMM: VISA address",):
             pass
@@ -190,26 +204,28 @@ class Driver(VISA_Driver):
             pass
 
         elif q_name == "Source: range":
-            self._source.set_range(value)
+            with self._lock:
+                self._source.set_range(value)
         elif q_name == "Source: extrema":
-            self._source_extrema = value
             update_ramps = True
             ext = value
         elif q_name == "Source: reset rate":
-            self._source_reset_rate = value
             update_ramps = True
             re_rate = value
         elif q_name == "Source: load resistance":
-            self._source_load_resistance = value
+            pass
         elif q_name == "DMM: range":
-            self._meter.set_range(value)
+            with self._lock:
+                self._meter.set_range(value)
         elif q_name == "DMM: number of points":
-            self._dmm_points = value
             update_ramps = True
-            points = value
-            self._meter.prepare_acquistion(points)
+            points = int(value)
+            self._padding_points = (points - 1) // 20
+            with self._lock:
+                self._meter.prepare_acquisition(points + 2 * self._padding_points)
         elif q_name == "DMM: acquisition rate":
-            self._meter.set_acquisition_rate(value)
+            with self._lock:
+                self._meter.set_acquisition_rate(value)
             update_ramps = True
             ac_rate = value
 
@@ -218,11 +234,8 @@ class Driver(VISA_Driver):
             re_rate = re_rate or self.getValue("Source: reset rate")
             points = points or self.getValue("DMM: number of points")
             ac_rate = ac_rate or self.getValue("DMM: acquisition rate")
-            # Center the points in the window of acquisition
-            val = ext + ext / (points - 1)
-            self._source.prepare_ramps(
-                [(-val, val, 2 * val * points / ac_rate,), (val, -val, re_rate),]
-            )
+            # Center the points in the window of acquisition and add padding
+            self._prepare_ramp(ext, points, ac_rate, re_rate)
 
         return value
 
@@ -232,43 +245,58 @@ class Driver(VISA_Driver):
         """
         q_name = quant.name
 
-        if qname == "VI curve":
-            ext = self._source_extrema
-            reset = self._source_reset_rate
-            ac_rate = self.getValue("DMM: acquisition rate")
-            points = self._dmm_points
-            # Center the points in the window of acquisition
-            init = ext + ext / (points - 1)
+        if q_name == "VI curve":
+            with self._lock:
+                ext = self.getValue("Source: extrema")
+                reset = self.getValue("Source: reset rate")
+                points = self.getValue("DMM: number of points")
+                # Center the points in the window of acquisition
+                init = self.ramp_extrema(ext, points, self._padding_points)
 
-            # Should only happen on the first scan since we reset the value after
-            # setting
-            while self._source.is_ramping():
-                sleep(0.01)
-            if self._source.current_value() != -init:
-                self._source.goto_value(-init, reset)
+                # Should only happen on the first scan since we reset the value after
+                # setting
+                while self._source.is_ramping():
+                    sleep(0.01)
+                curr = self._source.current_value()
+                logger.critical(f"{curr}")
+                if curr != -init:
+                    self._source.goto_value(-init, reset)
+                    while self._source.is_ramping():
+                        sleep(0.01)
+
+                # The DMM is preconfigured for the right number of points, so simply arm
+                self._meter.arm_device()
+
+                # Start the ramp.
+                self._source.start_ramp(0)
+                sleep(0.1)
+
+                # Wait for the data
+                self._meter.wait_for_data_ready()
                 while self._source.is_ramping():
                     sleep(0.01)
 
-            # The DMM is preconfigured for the right number of points, so simply arm
-            self._meter.arm_device()
+                # Retrieve the data
+                data = self._meter.retrieve_data()
+                # Remove padding
+                data = data[self._padding_points : -self._padding_points]
 
-            # Start the ramp.
-            self._source.start_ramp(0)
+                # Reset the source so that it has time to reset
+                self._source.start_ramp(1)
 
-            # Wait for the data
-            self._meter.wait_for_data_ready()
-
-            # Reset the source so that it has time to reset
-            self._source.start_ramp(1)
-
-            # Retrive the data
-            data = self._meter.retrieve_data()
-
-            return quant.getTraceDict(data, x=np.linspace(-ext, ext, self._dmm_points))
+                return quant.getTraceDict(
+                    data,
+                    x=np.linspace(-ext, ext, points)
+                    / self.getValue("Source: load resistance"),
+                )
 
         # For quantities corresponding to software only parameters simply
         # return the value
-        if q_name in (
+        elif q_name in (
+            "Source: Model",
+            "Source: VISA address",
+            "DMM: Model",
+            "DMM: VISA address",
             "Source: extrema",
             "Source: reset rate",
             "Source: load resistance",
@@ -277,25 +305,66 @@ class Driver(VISA_Driver):
             return quant.getValue()
 
         elif q_name == "Source: list ranges":
-            return self._source.list_ranges()
+            with self._lock:
+                return self._source.list_ranges()
 
         elif q_name == "Source: range":
-            return self._source.get_range()
+            with self._lock:
+                return self._source.get_range()
 
         elif q_name == "DMM: list ranges":
-            return self._meter.list_ranges()
+            with self._lock:
+                return self._meter.list_ranges()
 
         elif q_name == "DMM: range":
-            return self._meter.get_range()
+            with self._lock:
+                return self._meter.get_range()
 
         elif q_name == "DMM: list acquisition rates":
-            return self._meter.list_acquisition_rates()
+            with self._lock:
+                return self._meter.list_acquisition_rates()
 
         elif q_name == "DMM: acquisition rate":
-            return self._meter.get_acquisition_rate()
+            with self._lock:
+                return self._meter.get_acquisition_rate()
 
         else:
             raise KeyError("Unknown quantity: %s" % q_name)
+
+    @staticmethod
+    def ramp_extrema(sweep_extrema, points, padding_points):
+        """Extrema of the ramp.
+        
+        The value is chosen so that points are centered in each
+        acquisition segment.
+
+        """
+        half_step = sweep_extrema / (points - 1)
+        return sweep_extrema + (2 * padding_points + 1) * half_step
+
+    @staticmethod
+    def ramp_speed(sweep_extrema, points, data_rate):
+        """Sweep rate given the amplitude, number of points and selected ac rate.
+
+        """
+        # Adjusted by comparing curves on very different ranges so that they
+        # agree and coompared to a conventional measurement
+        data_rate *= 0.95  # Take into account the slowness of the DMM
+        return 2 * sweep_extrema * data_rate / points
+
+    def _prepare_ramp(self, ext, points, data_rate, reset_rate):
+        """Prepare a ramp by centering teh points and adding padding.
+        
+        """
+        # Center the points in the window of acquisition
+        pad = self._padding_points
+        val = self.ramp_extrema(ext, points, pad)
+        self._source.prepare_ramps(
+            [
+                (-val, val, self.ramp_speed(val, points + 2 * pad, data_rate)),
+                (val, -val, reset_rate),
+            ]
+        )
 
 
 if __name__ == "__main__":
