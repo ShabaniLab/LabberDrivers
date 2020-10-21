@@ -71,8 +71,8 @@ class Driver(VISA_Driver):
             raise ValueError('A wrong board id was used. Use READ:SYS:CAT to'
                              ' get the valid board ids.')
         elif answer.endswith('INVALID'):
-            msg = 'The ITC failed to answer to {}'
-            raise RuntimeError(msg.format(get_cmd))
+            msg = 'The ITC failed to answer to {}, its answer was {}'
+            raise RuntimeError(msg.format(get_cmd, msg))
         elif answer.endswith('N/A'):
             msg = ('The iTC does not appear to support this feature. It may'
                    ' be because a wrong UID was used. Use READ:SYS:CAT to'
