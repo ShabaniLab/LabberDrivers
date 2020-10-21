@@ -29,16 +29,11 @@ class Driver(VISA_Driver):
         return value
         
     def checkIfSweeping(self, quant, options={}):
-        target = float(self._do_read('READ:DEV:GRPZ:PSU:SIG:FSET')[:-1])
         self.wait(0.1)
-        currentValue = self.performGetValue(quant, options)
-        if abs(target - currentValue) < float(quant.sweep_res):
-            status = self._do_read('READ:DEV:GRPZ:PSU:ACTN')
-            # check that power supply is in hold mode
-            if status == 'HOLD':
-                return(False)
-        self.wait(0.1)
-        return(True)
+        # check that power supply is in hold mode
+        if self._do_read('READ:DEV:GRPZ:PSU:ACTN') == 'HOLD':
+            return False
+        return True
 
     def performStopSweep(self, quant, options={}):
         self._do_write('SET:DEV:GRPZ:PSU:ACTN:HOLD')
