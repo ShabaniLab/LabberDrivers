@@ -25,14 +25,7 @@ class Driver(VISA_Driver):
 
     def performGetValue(self, quant, options={}):
         """Perform the Get Value instrument operation"""
-        # check type of quantity
-        # check quantity
-        if quant.name == 'Magnetic Field':
-            get_cmd = 'READ:DEV:GRPZ:PSU:SIG:FLD'
-            value = float(self._do_read(get_cmd)[:-1])
-        else:
-            # for all other cases, call VISA driver
-            value = VISA_Driver.performGetValue(self, quant, options)
+        value = float(self._do_read(quant.get_cmd)[:-1])
         return value
         
     def checkIfSweeping(self, quant, options={}):
