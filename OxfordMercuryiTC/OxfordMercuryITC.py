@@ -28,7 +28,7 @@ class Driver(VISA_Driver):
         # Extract the numeric answer with its unit
         quantity = answer[len(get_cmd) + 1:].split(':', 1)[0]
         if quantity.lower() in ('on','off'):
-            return quantity
+            return quant.getValueFromCmdString(quantity)
         return float(quantity.rstrip(quant.unit))
 
     def performSetValue(self, quant, value, sweepRate=0.0, options={}):
