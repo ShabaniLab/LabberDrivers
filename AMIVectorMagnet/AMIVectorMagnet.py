@@ -111,7 +111,7 @@ class AMIPowerSupply(BasePowerSupply):
 
     def start_sweep(
         self,
-        target: float,
+        target: Union[float, np.ndarray],
         rate: Union[float, np.ndarray],
         times: Optional[np.ndarray] = None,
     ) -> None:
@@ -136,7 +136,6 @@ class AMIPowerSupply(BasePowerSupply):
 
         else:
             raise NotImplementedError()
-        # XXX TODO
         if times is not None:
             target_mask = np.zeros_like(target)
             if isinstance(target, float):
@@ -189,6 +188,20 @@ class AMIPowerSupply(BasePowerSupply):
         else:
             return False
 
+    def _adjust_output(self, times, targets_mask, targets, rates):
+        """Adjust continuously the sweeping rate based on a time array."""
+        start = time()
+        # XXX Could be optimized to make better use of the rates
+        for t, m, f, r in zip(times, targets_mask, targets, rates):
+            while time() - start < t:
+                sleep(0.001)
+            if m:
+                self.set_target_field(f)
+            self.set_rate(r)
+            self._driver.write("RAMP")
+            if self._stop_sweeping.is_set():
+                return
+
 
 class Keithley2400(BasePowerSupply):
     """Driver to use a Keithley 2400 as a magnet power supply"""
@@ -208,7 +221,7 @@ class Keithley2400(BasePowerSupply):
                 msg = "The output of {} is off, please turn it on."
                 raise RuntimeError(msg.format(address))
 
-        self._sweeping_thread = None
+        self._sweeping_thread: Optional[Thread] = None
         self._stop_sweeping = Event()
         self._curr_val = 0
 
@@ -231,7 +244,12 @@ class Keithley2400(BasePowerSupply):
                 self._driver.read_termination = "\n"
                 return self.read_value()
 
-    def start_sweep(self, target: float, rate: Union, times=None, slave=False):
+    def start_sweep(
+        self,
+        target: Union[float, np.ndarray],
+        rate: Union[float, np.ndarray],
+        times: Optional[np.ndarray] = None,
+    ):
         """Start a sweep managed by the computer for simplicity.
 
         Parameters
@@ -240,7 +258,7 @@ class Keithley2400(BasePowerSupply):
             Target value in T.
         rate : float | np.ndarray
             Rate at which to update the output.
-        times : np.ndarray
+        times : np.ndarray | None
             Times at which to change the value (those are expected to be
             regularly spaced).
 
@@ -250,13 +268,6 @@ class Keithley2400(BasePowerSupply):
         rate /= 60.0 / 0.995  # taking into account a weird drift
         interval = 0.1  # Time interval between values update
 
-        if slave:
-            self._stop_sweeping.clear()
-            self._sweeping_thread = Thread(
-                target=self._update_slave_output, args=(times, values)
-            )
-            self._sweeping_thread.start()
-
         if times is None:
             # we update the value of the output every 100 ms
             if rate == 0.0:
@@ -264,7 +275,11 @@ class Keithley2400(BasePowerSupply):
             step_number = int(round(np.abs((target - current) / (rate * interval)))) + 1
             values = np.linspace(current, target, step_number)
             times = np.linspace(0, interval * (step_number - 1), step_number)
-        elif len(times) == 1:
+            return
+
+        assert isinstance(target, np.ndarray)
+
+        if len(times) == 1:
             times = np.array(times[0], times[0])
             values = np.array(target[0], target[0])
         else:
@@ -281,13 +296,13 @@ class Keithley2400(BasePowerSupply):
             # Compute the value of the output to set at each time.
             values = []
             last_val = current
-            for time_slice, t in zip(val_times, target):
+            for time_slice, t in zip(val_times, target):  # type: ignore
                 values.append(np.linspace(last_val, t, len(time_slice) + 1)[:-1])
                 last_val = t
 
             # Add the missing last point to times and values
             val_times.append(np.array([val_times[-1][-1] + interval]))
-            values.append(np.array([target[-1]]))
+            values.append(np.array([target[-1]]))  # type: ignore
             times = np.concatenate(val_times)
             values = np.concatenate(values)
 
