@@ -794,8 +794,8 @@ class Driver(InstrumentWorker):
 
         elif q_name == "Bz offset":
             current = quant.getValue()
-            z_coil = self.getValue("Z Coil field")
             z_power = self._power_supplies["z"]
+            z_coil = z_power.read_value()
             if sweepRate != 0.0:
                 z_power.start_sweep(
                     z_coil - current + value, sweepRate
