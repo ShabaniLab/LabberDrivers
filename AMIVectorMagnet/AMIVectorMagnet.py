@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from math import sin, cos, sqrt, atan2, acos
+from math import sin, cos, sqrt, atan2, acos, copysign
 from threading import Thread, Event
 from multiprocessing import RLock
 from time import time, sleep
@@ -63,6 +63,13 @@ class BasePowerSupply:
 
         """
         raise NotImplementedError
+        
+    @property
+    def sweep_resolution(self):
+        """Provide the sweep resolution for the axis.
+
+        """
+        raise NotImplementedError
 
     def stop_sweep(self) -> None:
         """Stop the currently running sweep if any."""
@@ -94,15 +101,16 @@ class AMIPowerSupply(BasePowerSupply):
 
         self._stop_sweeping = Event()
         self._curr_val = 0
-        self.sweep_resolution = 0.0001
 
     def read_value(self) -> float:
         """Read the field currently applied by the power supply."""
-        return float(self._driver.query("FIELD:MAGnet?"))
+        with self._lock:
+            return float(self._driver.query("FIELD:MAGnet?"))
 
     def set_target_field(self, field: float) -> None:
         """Set the sweeping rate in T/min."""
-        self._driver.write(f"CONF:FIELD:TARGET {field}")
+        with self._lock:
+            self._driver.write(f"CONF:FIELD:TARGET {field}")
 
     def set_rate(self, rate: float) -> None:
         """Set the sweeping rate in T/min.
@@ -111,7 +119,8 @@ class AMIPowerSupply(BasePowerSupply):
         the largest field admissible for the full sphere as limit.
 
         """
-        self._driver.write(f"CONF:RAMP:RATE:FIELD 1,{rate},3")
+        with self._lock:
+            self._driver.write(f"CONF:RAMP:RATE:FIELD 1,{rate},3")
 
     def start_sweep(
         self,
@@ -136,7 +145,8 @@ class AMIPowerSupply(BasePowerSupply):
             if rate is not None:
                 self.set_rate(rate)
             self.set_target_field(target)
-            self._driver.write("RAMP")
+            with self._lock:
+                self._driver.write("RAMP")
 
         else:
             raise NotImplementedError()
@@ -181,16 +191,24 @@ class AMIPowerSupply(BasePowerSupply):
 
     def stop_sweep(self) -> None:
         """Stop the currently running sweep if any."""
-        self._driver.write("PAUSE")
-        while not self._driver.query("STATE?") == "3":
-            sleep(0.1)
+        with self._lock:
+            self._driver.write("PAUSE")
+            self.set_target_field(self.read_value())
+            while not self._driver.query("STATE?") == "3":
+                sleep(0.1)
 
     def check_if_sweeping(self) -> bool:
         """Check if the magnet is currently sweeping."""
-        if self._driver.query("STATE?") == "1":
-            return True
-        else:
-            return False
+        with self._lock:
+            if self._driver.query("STATE?") == "1":
+                return True
+            else:
+                return False
+            
+    @property
+    def sweep_resolution(self):
+        """Typical noise for the AMI"""
+        return 200e-6
 
     def _adjust_output(self, times, targets_mask, targets, rates):
         """Adjust continuously the sweeping rate based on a time array."""
@@ -202,7 +220,8 @@ class AMIPowerSupply(BasePowerSupply):
             if m:
                 self.set_target_field(f)
             self.set_rate(r)
-            self._driver.write("RAMP")
+            with self._lock:
+                self._driver.write("RAMP")
             if self._stop_sweeping.is_set():
                 return
 
@@ -276,7 +295,9 @@ class Keithley2400(BasePowerSupply):
             # we update the value of the output every 100 ms
             if rate == 0.0:
                 return
-            step_number = int(round(np.abs((target - current) / (rate * interval)))) + 1
+            # We need at least 2 point to get both the initial and the final value
+            # in the least of values
+            step_number = int(round(np.abs((target - current) / (rate * interval)))) + 2
             values = np.linspace(current, target, step_number)
             times = np.linspace(0, interval * (step_number - 1), step_number)
 
@@ -325,6 +346,12 @@ class Keithley2400(BasePowerSupply):
     def check_if_sweeping(self):
         """Check if a sweep is currently underway."""
         return self._sweeping_thread.is_alive() if self._sweeping_thread else False
+        
+    @property
+    def sweep_resolution(self):
+        """Keithley lowest resolution is 1 micro A"""
+        return 1e-6/self.conversion_factor
+
 
     def _update_output(self, times, values):
         """Update the output of the Keithley
@@ -404,22 +431,22 @@ class Converter:
 
     def to_new_basis(self, vec, no_offset=False):
         """Convert a vector expressed in the old basis."""
-        new = self._forward_change.apply(vec)
         if not no_offset:
-            if len(new.shape) == 1:
-                new[2] -= self._z_offset
+            if len(vec.shape) == 1:
+                vec[2] -= self._z_offset
             else:
-                new[:, 2] -= self._z_offset
-        return new
+                vec[:, 2] -= self._z_offset
+        return self._forward_change.apply(vec)
 
     def from_new_basis(self, vec, no_offset=False):
         """Convert a vector expressed in the new basis."""
+        vec = self._backward_change.apply(vec)
         if not no_offset:
             if not hasattr(vec, "shape") or len(vec.shape) == 1:
                 vec[2] += self._z_offset
             else:
                 vec[:, 2] += self._z_offset
-        return self._backward_change.apply(vec)
+        return vec
 
     def convert_to_xyz(self, x, y, z):
         return self.from_new_basis(np.array([x, y, z]))
@@ -505,7 +532,7 @@ class CylindricalConverter(Converter):
         # We keep the rate to set at the beginning of each time interval
         x_rate = -rate * state[0] * np.sin(phis)[:-1]
         y_rate = rate * state[0] * np.cos(phis)[:-1]
-        z_rate = np.zeros_like(phis)[:-1]
+        z_vals = state[2]*np.ones_like(phis)[1:]
 
         # We need the times in second
         return (
@@ -691,7 +718,7 @@ class Driver(InstrumentWorker):
         ):
             axis = q_name[13]
             model = self.getValue("Power supply %s axis: Model" % axis)
-            if value and model:
+            if value and value != quant.value and model:
                 self._start_power_supply_driver(axis, value, model)
 
         elif q_name in (
@@ -701,7 +728,7 @@ class Driver(InstrumentWorker):
         ):
             axis = q_name[13]
             add = self.getValue("Power supply %s axis: VISA address" % axis)
-            if value and add:
+            if value and value != quant.value and add:
                 self._start_power_supply_driver(axis, add, value)
 
         elif q_name in (
@@ -766,18 +793,21 @@ class Driver(InstrumentWorker):
             self._update_fields()
 
         elif q_name == "Bz offset":
-            current = quant.value
+            current = quant.getValue()
             z_coil = self.getValue("Z Coil field")
+            z_power = self._power_supplies["z"]
+            if sweepRate != 0.0:
+                z_power.start_sweep(
+                    z_coil - current + value, sweepRate
+                )
+            while z_power.check_if_sweeping():
+                sleep(0.1)
             mode = self.getValue("Specification mode")
             theta = self.getValue("Direction theta")
             phi = self.getValue("Direction phi")
             phi_offset = self.getValue("Phi offset")
             self._create_converter(mode, theta, phi, phi_offset, value)
             self._update_fields()
-            if sweepRate != 0.0:
-                self._power_supplies["z"].start_sweep(
-                    z_coil - current + value, sweepRate
-                )
 
         elif q_name == "Specification mode":
             theta = self.getValue("Direction theta")
@@ -793,101 +823,84 @@ class Driver(InstrumentWorker):
         if seen:
             return value
 
-        mode = self.getValue("Specification mode")
-        max_rates = self._get_max_rates()
+        mode = self.getValue('Specification mode')
         rate = sweepRate
-        if mode == "XYZ":
-            if q_name not in ("Field X", "Field Y", "Field Z"):
+        times = None
+        if mode == 'XYZ':
+            if q_name not in ('Field X', 'Field Y', 'Field Z'):
                 raise KeyError()
 
-            values = {k.lower(): self.getValue("Field %s" % k) for k in ("X", "Y", "Z")}
+            values = {k.lower(): self.getValue('Field %s' % k)
+                      for k in ('X', 'Y', 'Z')}
             values[q_name[-1].lower()] = value
-            targets = self._converter.from_new_basis(
-                [values[k] for k in ("x", "y", "z")]
-            )
-            self.log("{}".format(targets), level=1000)
-            if any(t > self.getValue("Max field") for t in targets):
-                raise ValueError(
-                    "The requested field is too large. Coil "
-                    "fields would be: %s" % targets
-                )
+            targets = self._converter.from_new_basis([values[k]
+                                                      for k in ('x', 'y', 'z')]
+                                                     )
+            if any(t > self.getValue('Max field') for t in targets):
+                raise ValueError('The requested field is too large. Coil '
+                                 'fields would be: %s' % targets)
             rates = [0, 0, 0]
-            rates[["X", "Y", "Z"].index(q_name[-1])] = rate
+            rates[['X', 'Y', 'Z'].index(q_name[-1])] = rate
             rates = self._converter.from_new_basis(rates, no_offset=True)
-            self._validate_rates(rates, max_rates)
 
-            self._ramp_fields(targets, rates)
-
-        elif mode == "Cylindrical":
-            if q_name not in ("Field magnitude", "Phi", "Field Z"):
+        elif mode == 'Cylindrical':
+            if q_name not in ('Field magnitude', 'Phi', 'Field Z'):
                 raise KeyError()
 
-            key = {"Field magnitude": "r", "Phi": "phi", "Field Z": "z"}[q_name]
+            key = {'Field magnitude': 'r',
+                   'Phi': 'phi',
+                   'Field Z': 'z'}[q_name]
 
-            state = (
-                self.getValue("Field magnitude"),
-                self.getValue("Phi"),
-                self.getValue("Field Z"),
-            )
+            state = (self.getValue('Field magnitude'),
+                     self.getValue('Phi'),
+                     self.getValue('Field Z'))
 
-            if key == "phi":
-                times, targets, rates = self._converter.convert_rate_to_xyz_rates(
-                    key, rate, state, value
-                )
-                self._validate_rates(rates, max_rates)
-                self._validate_targets(targets)
+            if key == 'phi':
+                times, targets, rates =\
+                    self._converter.convert_rate_to_xyz_rates(key, rate,
+                                                              state, value)
 
-                self._ramp_fields(targets, rates)
             else:
-                values = {k: v for k, v in zip(("r", "phi", "z"), state)}
+                values = {k: v for k, v in zip(('r', 'phi', 'z'), state)}
                 values[key] = value
-                targets = self._converter.convert_to_xyz(
-                    *[values[k] for k in ("r", "phi", "z")]
-                )
-                self._validate_targets(targets)
+                targets =\
+                    self._converter.convert_to_xyz(*[values[k]
+                                                     for k in ('r', 'phi', 'z')
+                                                     ]
+                                                    )
 
-                rates = self._converter.convert_rate_to_xyz_rates(key, rate, state)
-                self._validate_rates(rates, max_rates)
-
-                self._ramp_fields(targets, rates)
+                rates = self._converter.convert_rate_to_xyz_rates(key, rate,
+                                                                  state)
 
         else:
-            if q_name not in ("Field magnitude", "Theta", "Phi"):
+            if q_name not in ('Field magnitude', 'Theta', 'Phi'):
                 raise KeyError()
 
-            key = {"Field magnitude": "r", "Theta": "theta", "Phi": "phi"}[q_name]
+            key = {'Field magnitude': 'r',
+                       'Theta': 'theta',
+                       'Phi': 'phi'}[q_name]
 
-            state = (
-                self.getValue("Field magnitude"),
-                self.getValue("Theta"),
-                self.getValue("Phi"),
-            )
+            state = (self.getValue('Field magnitude'),
+                     self.getValue('Theta'),
+                     self.getValue('Phi'))
 
-            if key in ("theta", "phi"):
-                times, targets, rates = self._converter.convert_rate_to_xyz_rates(
-                    key, rate, state, value
-                )
-                self._validate_targets(targets)
-                self._validate_rates(rates, max_rates)
-
-                self._ramp_fields(targets, rates)
+            if key in ('theta', 'phi'):
+                times, targets, rates =\
+                    self._converter.convert_rate_to_xyz_rates(key, rate,
+                                                              state, value)
             else:
-
                 # Determine the target value
-                values = {k: v for k, v in zip(("r", "theta", "phi"), state)}
+                values = {k: v for k, v in zip(('r', 'theta', 'phi'), state)}
                 values[key] = value
-                vec = [values[k] for k in ("r", "theta", "phi")]
+                vec = [values[k] for k in ('r', 'theta', 'phi') ]
                 targets = self._converter.convert_to_xyz(*vec)
 
-                # Check that we respect the magnet bound
-                self._validate_targets(targets)
-
                 # Compute the rates for each axis
-                rates = self._converter.convert_rate_to_xyz_rates(key, rate, state)
-                self._validate_rates(rates, max_rates)
+                rates = self._converter.convert_rate_to_xyz_rates(key, rate,
+                                                                  state)
 
-                self._ramp_fields(targets, rates)
-
+        self._sweep_all_axis(targets, rates, times)
+        
         return value
 
     def performGetValue(self, quant, options={}):
@@ -1044,12 +1057,44 @@ class Driver(InstrumentWorker):
         self._create_converter(mode, theta, phi, phi_offset, z_offset)
         self._update_fields()
 
-    def _ramp_fields(self, targets, rates):
-        for axis, t, r in zip(("x", "y", "z"), targets, rates):
-            if r == 0.0:
+    def _sweep_all_axis(self, targets, rates, times):
+        """Sweep all three physical axis to reach the targets.
+
+        If any axis is already at the target value do not start a sweep.
+
+        """
+        # Validate the targets
+        self._validate_targets(targets)
+
+        # Enforce minimum rates (min_resolution/min) and validate them
+        max_rates = self._get_max_rates()
+        resolutions = self._get_sweep_resolutions()
+        for i, (rate, resolution) in enumerate(zip(rates, resolutions)):
+            if isinstance(rate, float) and abs(rate) < resolution:
+                rates[i] = copysign(resolution, rate)
+        self._validate_rates(rates, max_rates)
+
+        # Read current values
+        real_values = {}
+        for k, v in self._power_supplies.items():
+            real_values[k] = v.read_value()
+
+        for axis, target, rate, resolution in zip(('x', 'y', 'z'), targets, rates, resolutions):
+            # Do not sweep if we not have the resolution to do so
+            if isinstance(target, float) and abs(target - real_values[axis]) < resolution:  # Instrument resolution
                 continue
             psu = self._power_supplies[axis]
-            psu.start_sweep(t, r)
+            psu.start_sweep(target, rate, times)
+
+    
+    def _get_sweep_resolutions(self):
+        """Get the minimum resolution on each axes.
+
+        """
+        return tuple(
+            self._power_supplies[k].sweep_resolution
+            for k in sorted(self._power_supplies)
+        )
 
     def _validate_targets(self, targets):
         max_field = self.getValue("Max field")
