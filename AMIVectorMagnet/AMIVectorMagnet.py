@@ -766,12 +766,18 @@ class Driver(InstrumentWorker):
             self._update_fields()
 
         elif q_name == "Bz offset":
+            current = quant.value
+            z_coil = self.getValue("Z Coil field")
             mode = self.getValue("Specification mode")
             theta = self.getValue("Direction theta")
             phi = self.getValue("Direction phi")
             phi_offset = self.getValue("Phi offset")
             self._create_converter(mode, theta, phi, phi_offset, value)
             self._update_fields()
+            if sweepRate != 0.0:
+                self._power_supplies["z"].start_sweep(
+                    z_coil - current + value, sweepRate
+                )
 
         elif q_name == "Specification mode":
             theta = self.getValue("Direction theta")
@@ -1037,7 +1043,7 @@ class Driver(InstrumentWorker):
         mode = self.getValue("Specification mode")
         self._create_converter(mode, theta, phi, phi_offset, z_offset)
         self._update_fields()
-        
+
     def _ramp_fields(self, targets, rates):
         for axis, t, r in zip(("x", "y", "z"), targets, rates):
             if r == 0.0:
