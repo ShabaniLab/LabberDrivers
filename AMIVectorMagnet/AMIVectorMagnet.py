@@ -82,11 +82,15 @@ class AMIPowerSupply(BasePowerSupply):
         self._address = address
         self._rm = rm
         with self._lock:
-            self._driver.timeout = 2
+            self._driver.timeout = 2000
             self._driver.write_termination = "\n"
             self._driver.read_termination = "\r\n"
-            # Set teh field unit in T
-            self._driver.write("CONFigure:FIELD:UNITS 1")
+            # Set the field unit in T
+            sleep(1)
+            self._driver.read()
+            self._driver.read()
+            self._driver.write("CONF:FIELD:UNITS 1")
+            self._driver.write("CONF:RAMP:RATE:UNITS 1")
 
         self._stop_sweeping = Event()
         self._curr_val = 0
@@ -98,7 +102,7 @@ class AMIPowerSupply(BasePowerSupply):
 
     def set_target_field(self, field: float) -> None:
         """Set the sweeping rate in T/min."""
-        self._driver.write(f"FIELD:TARGET {field}")
+        self._driver.write(f"CONF:FIELD:TARGET {field}")
 
     def set_rate(self, rate: float) -> None:
         """Set the sweeping rate in T/min.
@@ -183,7 +187,7 @@ class AMIPowerSupply(BasePowerSupply):
 
     def check_if_sweeping(self) -> bool:
         """Check if the magnet is currently sweeping."""
-        if self._driver.query("STATE") == "1":
+        if self._driver.query("STATE?") == "1":
             return True
         else:
             return False
@@ -275,36 +279,36 @@ class Keithley2400(BasePowerSupply):
             step_number = int(round(np.abs((target - current) / (rate * interval)))) + 1
             values = np.linspace(current, target, step_number)
             times = np.linspace(0, interval * (step_number - 1), step_number)
-            return
 
-        assert isinstance(target, np.ndarray)
-
-        if len(times) == 1:
-            times = np.array(times[0], times[0])
-            values = np.array(target[0], target[0])
         else:
-            # Compute the points in time at which to update the value of the
-            # output
-            intervals = abs(times[1] - times[0])
-            val_times = [
-                np.linspace(
-                    t, t + intervals - interval, int(round(intervals / interval))
-                )
-                for t in times
-            ]
+            assert isinstance(target, np.ndarray)
 
-            # Compute the value of the output to set at each time.
-            values = []
-            last_val = current
-            for time_slice, t in zip(val_times, target):  # type: ignore
-                values.append(np.linspace(last_val, t, len(time_slice) + 1)[:-1])
-                last_val = t
+            if len(times) == 1:
+                times = np.array(times[0], times[0])
+                values = np.array(target[0], target[0])
+            else:
+                # Compute the points in time at which to update the value of the
+                # output
+                intervals = abs(times[1] - times[0])
+                val_times = [
+                    np.linspace(
+                        t, t + intervals - interval, int(round(intervals / interval))
+                    )
+                    for t in times
+                ]
 
-            # Add the missing last point to times and values
-            val_times.append(np.array([val_times[-1][-1] + interval]))
-            values.append(np.array([target[-1]]))  # type: ignore
-            times = np.concatenate(val_times)
-            values = np.concatenate(values)
+                # Compute the value of the output to set at each time.
+                values = []
+                last_val = current
+                for time_slice, t in zip(val_times, target):  # type: ignore
+                    values.append(np.linspace(last_val, t, len(time_slice) + 1)[:-1])
+                    last_val = t
+
+                # Add the missing last point to times and values
+                val_times.append(np.array([val_times[-1][-1] + interval]))
+                values.append(np.array([target[-1]]))  # type: ignore
+                times = np.concatenate(val_times)
+                values = np.concatenate(values)
 
         # convert the values to the proper unit
         values *= self.conversion_factor
@@ -697,7 +701,7 @@ class Driver(InstrumentWorker):
         ):
             axis = q_name[13]
             add = self.getValue("Power supply %s axis: VISA address" % axis)
-            if value and model:
+            if value and add:
                 self._start_power_supply_driver(axis, add, value)
 
         elif q_name in (
@@ -721,6 +725,7 @@ class Driver(InstrumentWorker):
             "Field magnitude rate",
             "Theta rate",
             "Phi rate",
+            "Ramping mode",
         ):
             pass  # Nothing to do for pure software values
 
@@ -805,9 +810,7 @@ class Driver(InstrumentWorker):
             rates = self._converter.from_new_basis(rates, no_offset=True)
             self._validate_rates(rates, max_rates)
 
-            for axis, t, r in zip(("x", "y", "z"), targets, rates):
-                psu = self._power_supplies[axis]
-                psu.start_sweep(t, r)
+            self._ramp_fields(targets, rates)
 
         elif mode == "Cylindrical":
             if q_name not in ("Field magnitude", "Phi", "Field Z"):
@@ -828,9 +831,7 @@ class Driver(InstrumentWorker):
                 self._validate_rates(rates, max_rates)
                 self._validate_targets(targets)
 
-                for axis, t, r in zip(("x", "y", "z"), targets, rates):
-                    psu = self._power_supplies[axis]
-                    psu.start_sweep(t, r, times)
+                self._ramp_fields(targets, rates)
             else:
                 values = {k: v for k, v in zip(("r", "phi", "z"), state)}
                 values[key] = value
@@ -842,9 +843,7 @@ class Driver(InstrumentWorker):
                 rates = self._converter.convert_rate_to_xyz_rates(key, rate, state)
                 self._validate_rates(rates, max_rates)
 
-                for axis, t, r in zip(("x", "y", "z"), targets, rates):
-                    psu = self._power_supplies[axis]
-                    psu.start_sweep(t, r)
+                self._ramp_fields(targets, rates)
 
         else:
             if q_name not in ("Field magnitude", "Theta", "Phi"):
@@ -865,9 +864,7 @@ class Driver(InstrumentWorker):
                 self._validate_targets(targets)
                 self._validate_rates(rates, max_rates)
 
-                for axis, t, r in zip(("x", "y", "z"), targets, rates):
-                    psu = self._power_supplies[axis]
-                    psu.start_sweep(t, r, times)
+                self._ramp_fields(targets, rates)
             else:
 
                 # Determine the target value
@@ -883,9 +880,7 @@ class Driver(InstrumentWorker):
                 rates = self._converter.convert_rate_to_xyz_rates(key, rate, state)
                 self._validate_rates(rates, max_rates)
 
-                for axis, t, r in zip(("x", "y", "z"), targets, rates):
-                    psu = self._power_supplies[axis]
-                    psu.start_sweep(t, r)
+                self._ramp_fields(targets, rates)
 
         return value
 
@@ -928,6 +923,7 @@ class Driver(InstrumentWorker):
             "Field magnitude rate",
             "Theta rate",
             "Phi rate",
+            "Ramping mode",
         ):
             return quant.getValue()
 
@@ -1041,6 +1037,13 @@ class Driver(InstrumentWorker):
         mode = self.getValue("Specification mode")
         self._create_converter(mode, theta, phi, phi_offset, z_offset)
         self._update_fields()
+        
+    def _ramp_fields(self, targets, rates):
+        for axis, t, r in zip(("x", "y", "z"), targets, rates):
+            if r == 0.0:
+                continue
+            psu = self._power_supplies[axis]
+            psu.start_sweep(t, r)
 
     def _validate_targets(self, targets):
         max_field = self.getValue("Max field")
