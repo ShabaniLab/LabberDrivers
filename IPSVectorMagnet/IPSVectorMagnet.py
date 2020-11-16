@@ -721,11 +721,11 @@ class Driver(VISA_Driver):
                 self._power_supplies[axis.lower()] = IPSPowerSupply(self, axis)
         ref_mode = self.getValue("Reference specification mode")
         if ref_mode == "XYZ":
-            values = (
-                self.getValue("Direction x"),
-                self.getValue("Direction y"),
-                self.getValue("Direction z"),
-            )
+            values = {
+                "x": self.getValue("Direction x"),
+                "y": self.getValue("Direction y"),
+                "z": self.getValue("Direction z"),
+            }
         elif ref_mode == "Spherical":
             values = (self.getValue("Direction theta"), self.getValue("Direction phi"))
         else:
