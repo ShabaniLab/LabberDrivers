@@ -66,7 +66,10 @@ class Driver(VISA_Driver):
         if quantity.lower() in ("on", "off"):
             return quantity
 
-        quantity = quantity.rstrip(quant.unit)
+        if quant.name.endswith("heater range"):
+            return quantity[:-2]  # Strip the unit
+
+        quantity = quantity[: -len(quant.unit)]
         factor = 1
         if not quantity[-1].isdigit():
             prefix = quantity[-1]
@@ -77,6 +80,22 @@ class Driver(VISA_Driver):
                 raise ValueError(f"Unknown unit prefix {prefix} in {answer}")
 
         return float(quantity) * factor
+
+    def performSetValue(self, quant, value, sweepRate=0.0, options={}):
+        """Perform the Set Value instrument operation.
+
+        This function should return the actual value set by the instrument
+
+        """
+        q_name = quant.name
+        cmd = quant.getCmdStringFromValue(value)
+        if q_name.endswith("heater range"):
+            cmd = cmd.replace('"', "")
+
+        answer = self.askAndLog(quant.set_cmd + cmd)
+
+        if not answer.endswith(":VALID"):
+            raise RuntimeError("Instrument answered: {} to {}".format(answer, cmd))
 
 
 if __name__ == "__main__":
