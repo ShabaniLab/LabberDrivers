@@ -139,6 +139,9 @@ class Driver(InstrumentDriver.InstrumentWorker):
 
     This assumes that the source will trigger the meter when starting a ramp.
 
+    Using the Yoko GS200 and the Keithley 6500 we can expect the bias current 
+    to be offset by 1-3% of the max value.
+
     """
 
     def __init__(self, *args, **kwargs):
@@ -349,11 +352,11 @@ class Driver(InstrumentDriver.InstrumentWorker):
         """
         # Adjusted by comparing curves on very different ranges so that they
         # agree and coompared to a conventional measurement
-        data_rate *= 0.95  # Take into account the slowness of the DMM
+        # data_rate *= 0.995  # Take into account the slowness of the DMM
         return 2 * sweep_extrema * data_rate / points
 
     def _prepare_ramp(self, ext, points, data_rate, reset_rate):
-        """Prepare a ramp by centering teh points and adding padding.
+        """Prepare a ramp by centering the points and adding padding.
         
         """
         # Center the points in the window of acquisition

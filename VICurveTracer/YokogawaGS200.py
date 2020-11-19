@@ -86,7 +86,11 @@ class Driver:
         """
         progs = []
         for start, stop, slope in ramps:
-            sweep_time = abs(start - stop) / slope
+
+            # Yoko GS200 Slope resolution is 1 decimal place
+            slope = round(slope, 1)
+            sweep_time = round(abs(start - stop) / slope, 1)
+            # raise ValueError(start, stop, slope, sweep_time)
             if sweep_time < 0.1:
                 raise ValueError("GS200 sweeps must be at least 100ms long.")
             progs.append(RAMP_TEMPLATE.format(sweep_time=sweep_time, value=stop))
@@ -114,10 +118,10 @@ class Driver:
 
 
 # Can used for debugging by commenting the import of BiasSource
-if __name__ == "__main__":
-    y = Driver("GPIB::13::INSTR")
-    try:
-        print(y.is_ramping())
-        y.goto_value(-1, 10)
-    finally:
-        y.close()
+# if __name__ == "__main__":
+#     y = Driver("GPIB::13::INSTR")
+#     try:
+#         print(y.is_ramping())
+#         y.goto_value(-1, 10)
+#     finally:
+#         y.close()
