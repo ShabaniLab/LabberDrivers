@@ -7,6 +7,7 @@ from VICurveTracer import VoltMeter
 
 SRATE = 1000
 
+
 class Driver(VoltMeter):
     """Keithley 6500 as VICurveTracer volt-meter.
 
@@ -18,10 +19,14 @@ class Driver(VoltMeter):
         self._rsc = rsc = rm.open_resource(
             address, write_termination="\n", read_termination="\n"
         )
+        self._rsc.enable_event(
+            pyvisa.constants.VI_EVENT_SERVICE_REQ, pyvisa.constants.EventMechanism.queue
+        )
         self._acq_rate = 100
         # Use digitized voltage, with a sampling rate of 1 kHz and auto aperture
         rsc.clear()
-        rsc.write(f':DIG:FUNC "VOLT";:DIG:VOLT:SRATE {SRATE};DIG:VOLT:APER AUTO')
+        rsc.write(f':DIG:FUNC "VOLT";:DIG:VOLT:SRATE {SRATE};:DIG:VOLT:APER AUTO')
+        rsc.write(":STAT:OPER:MAP 0, 4918, 4917;")
 
     def close(self):
         self._rsc.close()
@@ -36,7 +41,7 @@ class Driver(VoltMeter):
         """Return teh currently active range.
 
         """
-        return float(self._rsc.query(":DIG:VOLT:DC:RANG?"))
+        return float(self._rsc.query(":SENS:VOLT:DC:RANG?"))
 
     def set_range(self, value):
         """Set the range.
@@ -44,7 +49,7 @@ class Driver(VoltMeter):
         """
         if value not in (100e-3, 1, 10, 100, 1000):
             raise ValueError("Invalid range specified.")
-        resp = self._rsc.query(f":DIG:VOLT:DC:RANG {value};:VOLT:DC:RANG?")
+        resp = self._rsc.query(f":SENS:VOLT:DC:RANG {value};:VOLT:DC:RANG?")
         if float(resp) != value:
             raise RuntimeError(
                 f"Failed to set range (after setting value is {resp},"
@@ -70,7 +75,7 @@ class Driver(VoltMeter):
         """Set the acquistion rate.
 
         """
-        rate = int(round(value))
+        rate = int(round(value, 1))
         if rate not in (10, 20, 50, 100, 200, 250, 500, 1000):
             raise ValueError("Invalid rate specified.")
         self._acq_rate = rate
@@ -79,19 +84,18 @@ class Driver(VoltMeter):
         """Prepare the device to measure a series of points.
 
         """
-        self._points = points = int(points)*SRATE/self._acq_rate
+        self._points = points = int(round(points * SRATE / self._acq_rate, 1))
         rsc = self._rsc
         # Ensure the continuous triggering is disabled
-        rsc.write(":TRIG:CONT 0")
+        # rsc.write(":TRIG:CONT 0")
         rsc.write(
-            f":TRAC:POIN {points:d};"  # Number of points in the buffer
+            f":TRAC:POIN {points};"  # Number of points in the buffer
             ":FORM:DATA SREAL;"  # Data format
-            ":TRIG:EXT:IN:EDGE FALL;" #
+            ":TRIG:EXT:IN:EDGE FALL;"  #
             ':TRIG:LOAD "Empty";'  # Empty the trigger model
             ":TRIG:BLOC:BUFF:CLEAR 1;"  # Clear buffer
             ":TRIG:BLOC:WAIT 2, EXT, ENTER;"
-            f':TRIG:BLOC:MDIG 3, "defbuffer1", {points}'
-            ":DISP:SCR PROC"  # Minimize display processor use
+            f':TRIG:BLOC:MDIG 3, "defbuffer1", {points};'
         )
 
     def arm_device(self):
@@ -99,30 +103,51 @@ class Driver(VoltMeter):
 
         """
         rsc = self._rsc
+
+        # Type of event we want to be notified about
+        event_type = pyvisa.constants.EventType.service_request
+        # Mechanism by which we want to be notified
+        event_mech = pyvisa.constants.EventMechanism.queue
+        # Enable service request detection
+        rsc.enable_event(event_type, event_mech)
+
         # Clear the status register as otherwise the service request will fail
-        rsc.write(":STATUS:CLE;*CLS")
+        rsc.write(":STATUS:CLE;*CLS;:DISP:SCR PROC")  # Minimize display processor use
         # Enable service request on buffer full, init trigger model
-        rsc.write(":STAT:OPER:MAP 0, 4918, 4917;:STAT:OPER:ENAB 1;*SRE 128;:INIT")
+        rsc.write(":STAT:OPER:ENAB 1;*SRE 128;:INIT")
 
     def wait_for_data_ready(self):
         """Retrive the data collected after a trigger is received.
 
         """
-        self._rsc.wait_for_srq(timeout=60000)
+        rsc = self._rsc
+
+        # Type of event we want to be notified about
+        event_type = pyvisa.constants.EventType.service_request
+        # Mechanism by which we want to be notified
+        event_mech = pyvisa.constants.EventMechanism.queue
+
+        # Wait for service request
+        response = rsc.wait_on_event(event_type, 30000)
+        assert (response.event_type, response.timed_out) == (event_type, False)
+
+        # Disbale further events detection
+        rsc.disable_event(event_type, event_mech)
 
     def retrieve_data(self):
         """Retrive the data collected after a trigger is received.
 
         """
-        self._rsc.write(":DISP:SRC HOME")  # Turn display on
+        self._rsc.write(":DISP:SCR HOME")  # Turn display on
         self._rsc.write(f":TRAC:DATA? 1, {self._points}")
         block = self._rsc.read_bytes(self._points * 4 + 3)
 
         data = util.from_binary_block(
             block, 2, self._points * 4, "f", False, np.ndarray
         )
-        n_avg = SRATE/self._acq_rate
-        return np.average(data.reshape((-1, n_avg)), axis=-1)
+        n_avg = int(round(SRATE / self._acq_rate, 1))
+        cutoff = len(data) - len(data) % n_avg
+        return np.average(data[:cutoff].reshape((-1, n_avg)), axis=-1)
 
 
 # Can used for debugging by commenting the import of BiasSource
