@@ -19,9 +19,6 @@ class Driver(VoltMeter):
         self._rsc = rsc = rm.open_resource(
             address, write_termination="\n", read_termination="\n"
         )
-        self._rsc.enable_event(
-            pyvisa.constants.VI_EVENT_SERVICE_REQ, pyvisa.constants.EventMechanism.queue
-        )
         self._acq_rate = 100
         # Use digitized voltage, with a sampling rate of 1 kHz and auto aperture
         rsc.clear()
