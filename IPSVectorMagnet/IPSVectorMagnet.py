@@ -22,9 +22,7 @@ logger.critical("Test handler")
 
 
 class IPSPowerSupply:
-    """Single axis driver for Oxford IPS.
-
-    """
+    """Single axis driver for Oxford IPS."""
 
     def __init__(self, driver, axis):
         self._driver = driver  # for IPS we get the Labber driver
@@ -34,22 +32,16 @@ class IPSPowerSupply:
         self._stop_sweeping = Event()
 
     def read_value(self):
-        """Read the field currently applied by the power supply.
-
-        """
+        """Read the field currently applied by the power supply."""
         get_cmd = "READ:DEV:GRP{}:PSU:SIG:FLD".format(self._axis)
         return float(self._do_read(get_cmd)[:-1])
 
     def set_target_field(self, field):
-        """Set the sweeping rate in T/min.
-
-        """
+        """Set the sweeping rate in T/min."""
         self._do_write("SET:DEV:GRP{}:PSU:SIG:FSET:{}".format(self._axis, field))
 
     def set_rate(self, rate):
-        """Set the sweeping rate in T/min.
-
-        """
+        """Set the sweeping rate in T/min."""
         msg = "SET:DEV:GRP{}:PSU:SIG:RFST:{}"
         self._do_write(msg.format(self._axis, abs(rate)))
 
@@ -113,9 +105,7 @@ class IPSPowerSupply:
             self._sweeping_thread.start()
 
     def stop_sweep(self):
-        """Stop the currently running sweep if any.
-
-        """
+        """Stop the currently running sweep if any."""
         if self._sweeping_thread:
             self._stop_sweeping.set()
             self._sweeping_thread.join()
@@ -123,9 +113,7 @@ class IPSPowerSupply:
         self._do_write("SET:DEV:GRP{}:PSU:ACTN:HOLD".format(self._axis))
 
     def check_if_sweeping(self):
-        """Check if the magnet is currently sweeping.
-
-        """
+        """Check if the magnet is currently sweeping."""
         logger.critical("Is axis sweeping {}".format(self._axis))
         if self._sweeping_thread and self._sweeping_thread.is_alive():
             logger.critical("    Yes thread is alive")
@@ -142,9 +130,7 @@ class IPSPowerSupply:
             return True
 
     def _do_write(self, msg):
-        """Write a value to the Oxford IPS.
-
-        """
+        """Write a value to the Oxford IPS."""
         with self._driver._lock:
             answer = self._driver.askAndLog(msg, False)
         if not answer.endswith(":VALID"):
@@ -158,9 +144,7 @@ class IPSPowerSupply:
             raise RuntimeError(msg.format(answer))
 
     def _do_read(self, get_cmd):
-        """Read a value from the Oxford IPS.
-
-        """
+        """Read a value from the Oxford IPS."""
         with self._driver._lock:
             answer = self._driver.askAndLog(get_cmd)
         # strip first character
@@ -184,9 +168,7 @@ class IPSPowerSupply:
         return answer[len(get_cmd) + 1 :].split(":", 1)[0]
 
     def _adjust_output(self, times, targets_mask, targets, rates):
-        """Adjust continuously the sweeping rate based on a time array.
-
-        """
+        """Adjust continuously the sweeping rate based on a time array."""
         start = time()
         for t, m, f, r in zip(times, targets_mask, targets, rates):
             while time() - start < t:
@@ -222,9 +204,7 @@ class CustomPowerSupply:
         self._driver.close()
 
     def read_value(self):
-        """Read the output
-
-        """
+        """Read the output"""
         raise NotImplementedError
 
     def start_sweep(self, target, rate, times=None):
@@ -243,29 +223,21 @@ class CustomPowerSupply:
         raise NotImplementedError
 
     def stop_sweep(self):
-        """Stop the currently running sweep if any.
-
-        """
+        """Stop the currently running sweep if any."""
         raise NotImplementedError
 
     def check_if_sweeping(self):
-        """Check if the magnet is currently sweeping.
-
-        """
+        """Check if the magnet is currently sweeping."""
         raise NotImplementedError
 
     @property
     def sweep_resolution(self):
-        """Provide the sweep resolution for the axis.
-
-        """
+        """Provide the sweep resolution for the axis."""
         raise NotImplementedError
 
 
 class Keithley2450(CustomPowerSupply):
-    """Driver to use a Keithley 2450 as a magnet power supply
-
-    """
+    """Driver to use a Keithley 2450 as a magnet power supply"""
 
     def __init__(self, rm, address, conversion_factor):
         super().__init__(rm, address, conversion_factor)
@@ -294,9 +266,7 @@ class Keithley2450(CustomPowerSupply):
         return 1e-5 / self.conversion_factor
 
     def read_value(self):
-        """Read the current output current and convert.
-
-        """
+        """Read the current output current and convert."""
         if self._sweeping_thread and self._sweeping_thread.is_alive():
             return self._curr_val / self.conversion_factor
 
@@ -373,17 +343,13 @@ class Keithley2450(CustomPowerSupply):
         self._sweeping_thread.start()
 
     def stop_sweep(self):
-        """Stop a currently running sweep.
-
-        """
+        """Stop a currently running sweep."""
         if self._sweeping_thread:
             self._stop_sweeping.set()
             self._sweeping_thread.join()
 
     def check_if_sweeping(self):
-        """Check if a sweep is currently underway.
-
-        """
+        """Check if a sweep is currently underway."""
         return self._sweeping_thread.is_alive() if self._sweeping_thread else False
 
     def _update_output(self, times, values):
@@ -463,27 +429,23 @@ class Converter:
         self._z_offset = z_offset
 
     def to_new_basis(self, vec, no_offset=False):
-        """Convert a vector expressed in the old basis.
-
-        """
-        new = self._forward_change.apply(vec)
+        """Convert a vector expressed in the old basis."""
         if not no_offset:
-            if len(new.shape) == 1:
-                new[2] -= self._z_offset
+            if len(vec.shape) == 1:
+                vec[2] -= self._z_offset
             else:
-                new[:, 2] -= self._z_offset
-        return new
+                vec[:, 2] -= self._z_offset
+        return self._forward_change.apply(vec)
 
     def from_new_basis(self, vec, no_offset=False):
-        """Convert a vector expressed in the new basis.
-
-        """
+        """Convert a vector expressed in the new basis."""
+        vec = self._backward_change.apply(vec)
         if not no_offset:
             if not hasattr(vec, "shape") or len(vec.shape) == 1:
                 vec[2] += self._z_offset
             else:
                 vec[:, 2] += self._z_offset
-        return self._backward_change.apply(vec)
+        return vec
 
     def convert_to_xyz(self, x, y, z):
         return self.from_new_basis(np.array([x, y, z]))
@@ -569,7 +531,7 @@ class CylindricalConverter(Converter):
         # We keep the rate to set at the beginning of each time interval
         x_rate = -rate * state[0] * np.sin(phis)[:-1]
         y_rate = rate * state[0] * np.cos(phis)[:-1]
-        z_rate = np.zeros_like(phis)[:-1]
+        z_vals = state[2] * np.ones_like(phis)[1:]
 
         # We need the times in second
         return (
@@ -705,9 +667,7 @@ class Driver(VISA_Driver):
         self._converter = None
 
     def performOpen(self, options={}):
-        """Perform the operation of opening the instrument connection.
-
-        """
+        """Perform the operation of opening the instrument connection."""
         super().performOpen(options)
         for axis in ("X", "Y", "Z"):
             opt = "Custom B{} magnet power supply".format(axis.lower())
@@ -736,9 +696,7 @@ class Driver(VISA_Driver):
         self._update_reference_frame(ref_mode, values)
 
     def performClose(self, bError=False, options={}):
-        """Perform the close instrument connection operation.
-
-        """
+        """Perform the close instrument connection operation."""
         for axis in ("x", "y", "z"):
             supply = self._power_supplies[axis]
             if not isinstance(supply, IPSPowerSupply):
@@ -807,12 +765,17 @@ class Driver(VISA_Driver):
             "Field magnitude rate",
             "Theta rate",
             "Phi rate",
+            "Ramping mode",
         ):
             pass  # Nothing to do for pure software values
 
         elif q_name == "Reference specification mode":
             # Nothing we will keep xyz and theta phi in sync so that
             # representations agree
+            pass
+
+        elif q_name == "Ramping mode":
+            # Nothing to change here it is just a software parameter
             pass
 
         elif q_name in ("Direction x", "Direction y", "Direction z"):
@@ -886,6 +849,7 @@ class Driver(VISA_Driver):
                     "The requested field is too large. Coil "
                     "fields would be: %s" % targets
                 )
+
             rates = [0, 0, 0]
             rates[["X", "Y", "Z"].index(q_name[-1])] = rate
             rates = self._converter.from_new_basis(rates, no_offset=True)
@@ -932,6 +896,7 @@ class Driver(VISA_Driver):
                 times, targets, rates = self._converter.convert_rate_to_xyz_rates(
                     key, rate, state, value
                 )
+
             else:
                 # Determine the target value
                 values = {k: v for k, v in zip(("r", "theta", "phi"), state)}
@@ -942,14 +907,17 @@ class Driver(VISA_Driver):
                 # Compute the rates for each axis
                 rates = self._converter.convert_rate_to_xyz_rates(key, rate, state)
 
+        # In fast ramping mode we use the maximum rate determine on one
+        # axis on all axis to speed up the process.
+        if self.getValue("Ramping mode") == "Fast between point":
+            rates = [max(rates)] * 3
+
         self._sweep_all_axis(targets, rates, times)
 
         return value
 
     def performGetValue(self, quant, options={}):
-        """Perform the Get Value instrument operation.
-
-        """
+        """Perform the Get Value instrument operation."""
         q_name = quant.name
         # For quantities corresponding to software only parameters simply
         # return the value
@@ -987,6 +955,7 @@ class Driver(VISA_Driver):
             "Field magnitude rate",
             "Theta rate",
             "Phi rate",
+            "Ramping mode",
         ):
             return quant.getValue()
 
@@ -1060,9 +1029,7 @@ class Driver(VISA_Driver):
             psu.start_sweep(target, rate, times)
 
     def _get_max_rates(self):
-        """Get the maximum rates of the coil.
-
-        """
+        """Get the maximum rates of the coil."""
         return (
             self.getValue("Max rate: X"),
             self.getValue("Max rate: Y"),
@@ -1070,18 +1037,14 @@ class Driver(VISA_Driver):
         )
 
     def _get_sweep_resolutions(self):
-        """Get the maximum resolution on each axes.
-
-        """
+        """Get the maximum resolution on each axes."""
         return tuple(
             self._power_supplies[k].sweep_resolution
             for k in sorted(self._power_supplies)
         )
 
     def _start_power_supply_driver(self, axis, address, model):
-        """Start a power supply driver.
-
-        """
+        """Start a power supply driver."""
         if not self._visa_rm:
             self._visa_rm = ResourceManager()
         if model not in MODELS:
@@ -1095,9 +1058,7 @@ class Driver(VISA_Driver):
         self.setValue(qname.format(axis), True)
 
     def _create_converter(self, mode, theta, phi, phi_offset, z_offset):
-        """Create a converter
-
-        """
+        """Create a converter"""
         args = (("angles", (theta, phi)), phi_offset, z_offset)
         if mode == "XYZ":
             self._converter = Converter(*args)
@@ -1107,9 +1068,7 @@ class Driver(VISA_Driver):
             self._converter = SphericalConverter(*args)
 
     def _update_fields(self):
-        """Update the values of the fields after a change of basis/mode.
-
-        """
+        """Update the values of the fields after a change of basis/mode."""
         real_values = {}
         for k, v in self._power_supplies.items():
             real_values[k] = v.read_value()
