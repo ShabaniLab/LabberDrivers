@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import logging
+import re
 from math import sin, cos, sqrt, atan2, acos, copysign
 from threading import Thread, Event
 from multiprocessing import RLock
@@ -688,11 +689,31 @@ class Driver(VISA_Driver):
             }
         elif ref_mode == "Spherical":
             values = (self.getValue("Direction theta"), self.getValue("Direction phi"))
+        elif "Plane" in ref_mode:
+            # We provide the angles in the following order:
+            # - first the angle between the normal of the reference mode and the
+            #   next axis in the direct order (normal Z -> xz angle)
+            # - second the angle between the normal of the reference mode and the
+            #   previous axis in the direct order (normal Z -> yz angle)
+            if "X" in ref_mode:
+                values = (
+                    self.getValue("Direction YXangle"),
+                    self.getValue("Direction ZXangle"),
+                )
+            if "Y" in ref_mode:
+                values = (
+                    self.getValue("Direction ZYangle"),
+                    self.getValue("Direction XYangle"),
+                )
+            if "Z" in ref_mode:
+                values = (
+                    self.getValue("Direction XZangle"),
+                    self.getValue("Direction YZangle"),
+                )
+            else:
+                raise ValueError(f"Unkown frame specification: {ref_mode}")
         else:
-            values = (
-                self.getValue("Direction XZangle"),
-                self.getValue("Direction YZangle"),
-            )
+            raise ValueError(f"Unkown frame specification: {ref_mode}")
         self._update_reference_frame(ref_mode, values)
 
     def performClose(self, bError=False, options={}):
@@ -792,14 +813,30 @@ class Driver(VISA_Driver):
                 phi = value
             self._update_reference_frame("Spherical", (theta, phi))
 
-        elif q_name in ("Direction XZangle", "Direction YZangle"):
-            if "XZangle" in q_name:
-                xz = value
-                yz = self.getValue("Direction YZangle")
+        elif re.match("Direction [XYZ][XYZ]angle", q_name):
+            ref_mode = self.getValue("Reference specification mode")
+            if "X" in ref_mode:
+                if "YX" in q_name:
+                    angle1 = value
+                    angle2 = self.getValue("Direction ZXangle")
+                else:
+                    angle1 = self.getValue("Direction ZXangle")
+                    angle2 = value
+            elif "Y" in ref_mode:
+                if "ZY" in q_name:
+                    angle1 = value
+                    angle2 = self.getValue("Direction XYangle")
+                else:
+                    angle1 = self.getValue("Direction ZYangle")
+                    angle2 = value
             else:
-                xz = self.getValue("Direction XZangle")
-                yz = value
-            self._update_reference_frame("Plane", (xz, yz))
+                if "XZangle" in q_name:
+                    angle1 = value
+                    angle2 = self.getValue("Direction YZangle")
+                else:
+                    angle1 = self.getValue("Direction XZangle")
+                    angle2 = value
+            self._update_reference_frame("Plane", (angle1, angle2))
 
         elif q_name == "Phi offset":
             mode = self.getValue("Specification mode")
@@ -1086,7 +1123,7 @@ class Driver(VISA_Driver):
     def _update_reference_frame(self, mode, values):
         """Update the reference frame definition in all representations.
 
-        XXX: currently the plane representation is not updated !
+        XXX: currently the plane representations is not updated !
 
         """
         if mode == "XYZ":
@@ -1098,11 +1135,31 @@ class Driver(VISA_Driver):
             self.setValue("Direction x", sin(theta) * cos(phi))
             self.setValue("Direction y", sin(theta) * sin(phi))
             self.setValue("Direction z", cos(theta))
-        elif mode == "Plane":
-            xz, yz = values
-            xzrot = Rotation.from_euler("y", -xz, degrees=True)
-            yzrot = Rotation.from_euler("x", yz, degrees=True)
-            x, y, z = (xzrot * yzrot).apply([0, 0, 1])
+        elif mode.startswith("Plane"):
+            ang1, ang2 = values
+            # ang 1 is the angle between the normal axis (cf mode name) and the
+            # following axis in the direct order (Z normal, angle is xz). Since we
+            # count angles positively from the normal to the axis, this angle
+            # is positive using the direct orientation, since we need to rotate by
+            # minus this angle for the correction we add a minus sign.
+            ang1 *= -1
+            if "Z" in mode:
+                norm_vector = [0, 0, 1]
+                r1axis = "y"
+                r2axis = "x"
+            elif "X" in mode:
+                norm_vector = [1, 0, 0]
+                r1axis = "z"
+                r2axis = "y"
+            elif "Y" in mode:
+                norm_vector = [0, 1, 0]
+                r1axis = "x"
+                r2axis = "z"
+            else:
+                raise ValueError("Unknown reference frame specification")
+            rot1 = Rotation.from_euler(r1axis, ang1, degrees=True)
+            rot2 = Rotation.from_euler(r2axis, ang2, degrees=True)
+            x, y, z = (rot1 * rot2).apply(norm_vector)
             self.setValue("Direction x", x)
             self.setValue("Direction y", y)
             self.setValue("Direction z", z)
