@@ -71,6 +71,11 @@ class BiasGenerator:
         """
         pass
 
+    def get_admissible_reset_rate(self, reset_rate, amplitude):
+        """
+        """
+        pass
+
 
 class VoltMeter:
     """Voltmeter for VICurveTracer.
@@ -175,6 +180,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
             ext = self.getValue("Source: extrema")
             re_rate = self.getValue("Source: reset rate")
             points = int(self.getValue("DMM: number of points"))
+            self._meter.set_acquisition_rate(self.getValue("DMM: acquisition rate"))
             self._padding_points = (points - 1) // 20
             ac_rate = self.readValueFromOther("DMM: acquisition rate")
 
@@ -362,10 +368,15 @@ class Driver(InstrumentDriver.InstrumentWorker):
         # Center the points in the window of acquisition
         pad = self._padding_points
         val = self.ramp_extrema(ext, points, pad)
+        # raise ValueError(data_rate)
         self._source.prepare_ramps(
             [
                 (-val, val, self.ramp_speed(val, points + 2 * pad, data_rate)),
-                (val, -val, reset_rate),
+                (
+                    val,
+                    -val,
+                    self._source.get_admissible_reset_rate(reset_rate, 2 * val),
+                ),
             ]
         )
 
