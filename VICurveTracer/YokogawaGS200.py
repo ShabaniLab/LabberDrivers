@@ -88,11 +88,12 @@ class Driver:
         for start, stop, slope in ramps:
 
             # Yoko GS200 Slope resolution is 1 decimal place
-            slope = round(slope, 1)
             sweep_time = round(abs(start - stop) / slope, 1)
-            # raise ValueError(start, stop, slope, sweep_time)
             if sweep_time < 0.1:
-                raise ValueError("GS200 sweeps must be at least 100ms long.")
+                raise ValueError(
+                    f"GS200 sweeps must be at least 100ms long. Time is {sweep_time},"
+                    f" start: {start}, stop: {stop}, slope: {slope}"
+                )
             progs.append(RAMP_TEMPLATE.format(sweep_time=sweep_time, value=stop))
         self._ramps = progs
 
@@ -115,6 +116,17 @@ class Driver:
             return ramping
         else:
             return False
+
+    def get_admissible_reset_rate(self, reset_rate, amplitude):
+        """Get an admissible reset rate.
+        
+        This avoids issue for too fast reset for the system to handle.
+        """
+        sweep_time = round(amplitude / reset_rate, 1)
+        if sweep_time < 0.1:
+            return amplitude / 0.1
+        else:
+            return sweep_time
 
 
 # Can used for debugging by commenting the import of BiasSource
