@@ -23,139 +23,142 @@ class BiasGenerator:
     """Bias current generator for VICurveTracer."""
 
     def __init__(self, address):
-        pass
+        raise NotImplementedError
 
     def close(self):
-        pass
+        raise NotImplementedError
 
     def select_range(self):
         """"""
-        pass
+        raise NotImplementedError
 
     def current_value(self):
         """"""
-        pass
+        raise NotImplementedError
 
     def goto_value(self, value, slope):
         """"""
-        pass
+        raise NotImplementedError
 
     def prepare_ramps(self, ramps: List[Tuple[float, float, float]]):
         """"""
-        pass
+        raise NotImplementedError
 
     def start_ramp(self, index):
         """"""
-        pass
+        raise NotImplementedError
 
     def is_ramping(self):
         """"""
-        pass
+        raise NotImplementedError
 
     def get_admissible_reset_rate(self, reset_rate, amplitude):
         """"""
-        pass
+        raise NotImplementedError
 
     def get_sweep_resolution(self) -> Dict[str, float]:
         """ """
-        pass
+        raise NotImplementedError
 
     def support_continuous_sweeping(self) -> bool:
         """"""
-        pass
+        raise NotImplementedError
 
 
 class VoltMeter:
     """Voltmeter for VICurveTracer."""
 
     def __init__(self, address):
-        pass
+        raise NotImplementedError
 
     def close(self):
-        pass
+        raise NotImplementedError
 
     def list_ranges(self):
         """"""
-        pass
+        raise NotImplementedError
 
     def get_range(self):
         """"""
-        pass
+        raise NotImplementedError
 
     def set_range(self, value):
         """"""
-        pass
+        raise NotImplementedError
 
     # Continuous or point by point
     def set_acquisition_mode(self, value):
         """"""
-        pass
+        raise NotImplementedError
 
     def get_averaging_time(self):
         """"""
-        pass
+        raise NotImplementedError
 
     def set_averaging_time(self, value):
         """"""
-        pass
+        raise NotImplementedError
 
     def list_acquisition_rates(self):
         """"""
-        pass
+        raise NotImplementedError
 
     def get_acquisition_rate(self):
         """"""
-        pass
+        raise NotImplementedError
 
     def set_acquisition_rate(self, value):
         """"""
-        pass
+        raise NotImplementedError
 
     def prepare_acquistion(self, points):
         """"""
-        pass
+        raise NotImplementedError
 
     def arm_device(self):
         """"""
-        pass
+        raise NotImplementedError
 
     def wait_for_data_ready(self):
         """"""
-        pass
+        raise NotImplementedError
 
     def retrieve_data(self):
         """"""
-        pass
+        raise NotImplementedError
 
     def read_value(self):
         """"""
-        pass
+        raise NotImplementedError
 
 
 class LockIn:
     """"""
 
+    def __init__(self, address):
+        raise NotImplementedError
+
     def get_amplitude(self):
-        pass
+        raise NotImplementedError
 
     def set_amplitude(self, value):
-        pass
+        raise NotImplementedError
 
     def list_tcs(self):
         """"""
-        pass
+        raise NotImplementedError
 
     def get_tc(self):
-        pass
+        raise NotImplementedError
 
     def set_tc(self, value):
-        pass
+        raise NotImplementedError
 
     def get_frequency(self):
-        pass
+        raise NotImplementedError
 
     def set_frequency(self, value):
-        pass
+        raise NotImplementedError
 
     def read_value(self):
         """Read a complex value from the lock-in.
@@ -165,7 +168,7 @@ class LockIn:
         The framework ensures a proper wait time.
 
         """
-        pass
+        raise NotImplementedError
 
 
 class Driver(InstrumentDriver.InstrumentWorker):

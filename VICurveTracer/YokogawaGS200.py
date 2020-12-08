@@ -129,6 +129,7 @@ class Driver:
     def get_sweep_resolution(self):
         return {"time": 0.1}
 
+    @classmethod
     def support_continuous_sweeping(self) -> bool:
         """"""
         return True
