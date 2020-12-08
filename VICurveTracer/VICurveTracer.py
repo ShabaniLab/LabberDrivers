@@ -191,6 +191,9 @@ class Driver(InstrumentDriver.InstrumentWorker):
         # In Point by point (with Lock-in) this is used to store the LI trace
         # acquired at the same time as the VI.
         self._dr_trace = None
+        # Padding points help overcome issues with respect of the ramp by the
+        # source
+        self._padding_points = 0
 
     def performOpen(self, options={}):
         """Perform the operation of opening the instrument connection."""
@@ -212,8 +215,8 @@ class Driver(InstrumentDriver.InstrumentWorker):
             self._meter = cls(m_add)
 
             # Start the lock-in
-            li_model = self.getValue("DMM: Model")
-            li_add = self.getValue("DMM: VISA address")
+            li_model = self.getValue("Lock-In: Model")
+            li_add = self.getValue("Lock-In: VISA address")
             if acq_mode == "Point by point (with Lock-in)":
                 if li_model and li_add:
                     cls = importlib.import_module(li_model).Driver
@@ -232,7 +235,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
             if acq_mode == "Continuous":
                 ext = self.getValue("Source: extrema")
                 re_rate = self.getValue("Source: reset rate")
-
+                points = self.getValue("DMM: number of points")
                 ac_rate = self.readValueFromOther("DMM: acquisition rate")
 
                 # Center the points in the window of acquisition and add padding
@@ -267,8 +270,8 @@ class Driver(InstrumentDriver.InstrumentWorker):
 
         elif q_name == "Acquisition mode":
             if value == "Point by point (with Lock-in)":
-                li_model = self.getValue("DMM: Model")
-                li_add = self.getValue("DMM: VISA address")
+                li_model = self.getValue("Lock-In: Model")
+                li_add = self.getValue("Lock-In: VISA address")
                 if li_model and li_add:
                     cls = importlib.import_module(li_model).Driver
                     self._li = cls(li_add)
@@ -313,7 +316,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
                 self._li.set_amplitude(value)
         elif q_name == "Lock-in: time constant":
             with self._lock:
-                self._li.set_time_constant(value)
+                self._li.set_tc(value)
                 self._meter.set_averaging_time(
                     value * self.getValue("Lock-in: settling time")
                 )
@@ -341,12 +344,14 @@ class Driver(InstrumentDriver.InstrumentWorker):
 
         if q_name == "VI curve":
             acq_mode = self.getValue("Acquisition mode")
+            ext = self.getValue("Source: extrema")
+            points = self.getValue("DMM: number of points")
             with self._lock:
                 if acq_mode == "Continuous":
                     data = self._perform_continuous_acquisition()
                 else:
                     data = self._perform_point_by_point_acquisition(
-                        "without" in acq_mode
+                        "without" not in acq_mode
                     )
                 return quant.getTraceDict(
                     data,
@@ -355,6 +360,8 @@ class Driver(InstrumentDriver.InstrumentWorker):
                 )
 
         if q_name == "dR vs I curve":
+            ext = self.getValue("Source: extrema")
+            points = self.getValue("DMM: number of points")
             return quant.getTraceDict(
                 self._dr_trace,
                 x=np.linspace(-ext, ext, points)
@@ -364,10 +371,13 @@ class Driver(InstrumentDriver.InstrumentWorker):
         # For quantities corresponding to software only parameters simply
         # return the value
         elif q_name in (
+            "Acquisition mode",
             "Source: Model",
             "Source: VISA address",
             "DMM: Model",
             "DMM: VISA address",
+            "Lock-In: Model",
+            "Lock-In: VISA address",
             "Source: extrema",
             "Source: reset rate",
             "Source: load resistance",
@@ -402,19 +412,23 @@ class Driver(InstrumentDriver.InstrumentWorker):
 
         elif q_name == "DMM: averaging time":
             with self._lock:
-                return self._meter.get_averaging_time(value)
+                return self._meter.get_averaging_time()
 
         elif q_name == "Lock-in: frequency":
             with self._lock:
-                return self._li.get_frequency(value)
+                return self._li.get_frequency()
 
         elif q_name == "Lock-in: amplitude":
             with self._lock:
-                return self._li.get_amplitude(value)
+                return self._li.get_amplitude()
+
+        elif q_name == "Lock-in: list time constants":
+            with self._lock:
+                return self._li.list_tcs()
 
         elif q_name == "Lock-in: time constant":
             with self._lock:
-                value = self._li.get_time_constant(value)
+                value = self._li.get_tc()
                 # Ensure this setting cannot go out of sync.
                 self._meter.set_averaging_time(
                     value * self.getValue("Lock-in: settling time")
@@ -428,6 +442,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
                 self._meter.set_averaging_time(
                     value * self.getValue("Lock-in: time constant")
                 )
+            return value
         else:
             raise KeyError("Unknown quantity: %s" % q_name)
 
@@ -466,6 +481,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
             padding = possible_pads[np.argmin(times % res["time"])]
         else:
             raise ValueError("Unsupported resolution format")
+        self._padding_points = padding
 
         # Center the points in the window of acquisition
         val = self.ramp_extrema(ext, points, padding)
@@ -480,26 +496,28 @@ class Driver(InstrumentDriver.InstrumentWorker):
                 ),
             ]
         )
-        self._meter.prepare_acquisition()
+        self._meter.prepare_acquisition(points + 2 * padding)
 
     def _change_meter_acquisition_mode(self, mode):
         """Change the meter configuation based on the acquisition mode."""
-        if "Point by point" in value:
+        if "Point by point" in mode:
             self._meter.set_acquisition_mode("point by point")
-            if "without" in value:
+            if "without" not in mode:
                 self._meter.set_averaging_time(
                     self.getValue("Lock-in: time constant")
                     * self.getValue("Lock-in: settling time")
                 )
             else:
-                if "without" in value:
+                if "without" in mode:
                     self._meter.set_averaging_time(self.getValue("DMM: averaging time"))
         else:
+            ext = self.getValue("Source: extrema")
+            re_rate = self.getValue("Source: reset rate")
+            points = self.getValue("DMM: number of points")
+            ac_rate = self.getValue("DMM: acquisition rate")
             self._meter.set_acquisition_mode("continuous")
-            self._meter.set_acquisition_rate(self.getValue("DMM: acquisition rate"))
-            points = int(self.getValue("DMM: number of points"))
-            self._padding_points = (points - 1) // 20
-            self._meter.prepare_acquisition(points + 2 * self._padding_points)
+            self._meter.set_acquisition_rate(ac_rate)
+            self._prepare_ramp(ext, points, ac_rate, re_rate)
 
     def _perform_continuous_acquisition(self):
         """Perform a continuous acquisition."""
@@ -557,16 +575,29 @@ class Driver(InstrumentDriver.InstrumentWorker):
         dmm = self._meter
         li = self._li
 
+        # Should only happen on the first scan since we reset the value after
+        # setting
+        while self._source.is_ramping():
+            sleep(0.01)
+        # Go to the first point and wait
+        source.goto_value(set_points[0], reset)
+        while source.is_ramping():
+            sleep(0.01)
+
         for i, v in enumerate(set_points):
             source.goto_value(v, reset)
             dmm_vals[i] = dmm.read_value()
             if with_li:
                 li_vals[i] = li.read_value()
 
-        self._dr_trace = li_vals / (
-            self.getValue("Lock-in: amplitude")
-            / self.getValue("Lock-in: load resistance")
-        )
+        # Go to the first point and wait
+        source.goto_value(set_points[0], reset)
+
+        if with_li:
+            self._dr_trace = li_vals / (
+                self.getValue("Lock-in: amplitude")
+                / self.getValue("Lock-in: load resistance")
+            )
 
         return dmm_vals
 

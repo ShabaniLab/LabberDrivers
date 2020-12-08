@@ -18,9 +18,7 @@ class Driver(VoltMeter):
             address, write_termination="\n", read_termination="\n"
         )
         self._acq_rate = 100
-        # Use digitized voltage, with a sampling rate of 1 kHz and auto aperture
         rsc.clear()
-        rsc.write(f':DIG:FUNC "VOLT";:DIG:VOLT:SRATE {SRATE};:DIG:VOLT:APER AUTO')
         # Setup signals to allow SRQ on buffer full
         rsc.write(":STAT:OPER:MAP 0, 4918, 4917;")
 
@@ -73,14 +71,9 @@ class Driver(VoltMeter):
             # Use digitized voltage, with a sampling rate of 1 kHz and auto aperture
             rsc.clear()
             rsc.write(f':DIG:FUNC "VOLT";:DIG:VOLT:SRATE {SRATE};:DIG:VOLT:APER AUTO')
-            rsc.write(":STAT:OPER:MAP 0, 4918, 4917;")
         else:
             # Use ASCII for single point transfer
-            rsc.write(
-                ':FUNC "VOLT:DC";'
-                f":TRAC:POIN {1};"  # Number of points in the buffer
-                ":FORM:DATA SREAL;"  # Data format
-            )
+            rsc.write(':FUNC "VOLT:DC";:FORM:DATA ASC;')  # Data format
 
     def get_averaging_time(self):
         """"""
@@ -94,7 +87,7 @@ class Driver(VoltMeter):
         """"""
         rsc = self._rsc
         # Use repeating average
-        rsc.write(':VOLT:AVER:TCON "REP"')
+        rsc.write(":VOLT:AVER:TCON REP")
         nplc = value / (1 / 60)
         err_10 = nplc % 10
         err_1 = nplc % 1
@@ -113,9 +106,9 @@ class Driver(VoltMeter):
 
         rsc.write(f":VOLT:DC:NPLC {nplc}")
         if avg > 1:
-            write(f":VOLT:AVER:STAT 1;:VOLT:AVER:COUN {avg}")
+            rsc.write(f":VOLT:AVER:STAT 1;:VOLT:AVER:COUN {avg}")
         else:
-            write(f":VOLT:AVER:STAT 0;:VOLT:AVER:COUN 1")
+            rsc.write(f":VOLT:AVER:STAT 0;:VOLT:AVER:COUN 1")
 
         return nplc * 1 / 60 * avg
 
@@ -197,7 +190,7 @@ class Driver(VoltMeter):
         return np.average(data[:cutoff].reshape((-1, n_avg)), axis=-1)
 
     def read_value(self):
-        return float(self.query(":READ?"))
+        return float(self._rsc.query(":READ?"))
 
 
 # Can used for debugging by commenting the import of BiasSource

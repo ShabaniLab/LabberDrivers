@@ -5,7 +5,7 @@ import numpy as np
 from VICurveTracer import LockIn
 
 
-class SR860(LockIn):
+class Driver(LockIn):
     """"""
 
     def __init__(self, address):

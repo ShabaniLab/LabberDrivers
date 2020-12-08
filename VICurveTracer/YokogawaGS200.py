@@ -114,12 +114,13 @@ class Driver:
         """Get an admissible reset rate.
 
         This avoids issue for too fast reset for the system to handle.
+
         """
         sweep_time = round(amplitude / reset_rate, 1)
         if sweep_time < 0.1:
             return amplitude / 0.1
         else:
-            return sweep_time
+            return reset_rate
 
     def get_sweep_resolution(self):
         return {"time": 0.1}
