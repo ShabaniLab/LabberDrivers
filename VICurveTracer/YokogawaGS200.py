@@ -40,20 +40,24 @@ class Driver:
     def close(self):
         self._rsc.close()
 
-    def list_ranges(self):
-        return "10mV, 100mV, 1V, 10V, 30V"
+    def select_range(self, value):
+        if value < 12e-3:
+            r = 10e-3
+        elif value < 120e-3:
+            r = 100e-3
+        elif value < 1.2:
+            r = 1
+        elif value < 12:
+            r = 10
+        elif value < 32:
+            r = 30
+        else:
+            raise ValueError(f"No admissible range for {value}")
 
-    def get_range(self):
-        return float(self._rsc.query(":SOUR:RANG?"))
-
-    def set_range(self, value):
-        if value not in (10e-3, 100e-3, 1, 10, 30):
-            raise ValueError("Invalid range specified.")
-        resp = self._rsc.query(f":SOUR:RANG {value};:SOUR:RANG?")
-        if float(resp) != value:
+        resp = self._rsc.query(f":SOUR:RANG {r};:SOUR:RANG?")
+        if float(resp) != r:
             raise RuntimeError(
-                f"Failed to set range (after setting value is {resp},"
-                f"expected {value}"
+                f"Failed to set range (after setting value is {resp}," f"expected {r}"
             )
 
     def current_value(self):
@@ -124,6 +128,10 @@ class Driver:
 
     def get_sweep_resolution(self):
         return {"time": 0.1}
+
+    def support_continuous_sweeping(self) -> bool:
+        """"""
+        return True
 
 
 # Can used for debugging by commenting the import of BiasSource

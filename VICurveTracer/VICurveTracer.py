@@ -28,15 +28,7 @@ class BiasGenerator:
     def close(self):
         pass
 
-    def list_ranges(self):
-        """"""
-        pass
-
-    def get_range(self):
-        """"""
-        pass
-
-    def set_range(self, value):
+    def select_range(self):
         """"""
         pass
 
@@ -66,6 +58,10 @@ class BiasGenerator:
 
     def get_sweep_resolution(self) -> Dict[str, float]:
         """ """
+        pass
+
+    def support_continuous_sweeping(self) -> bool:
+        """"""
         pass
 
 
@@ -207,6 +203,13 @@ class Driver(InstrumentDriver.InstrumentWorker):
             s_add = self.getValue("Source: VISA address")
             cls = importlib.import_module(s_model).Driver
             self._source = cls(s_add)
+            if (
+                not self._source.support_continuous_sweeping()
+                and acq_mode == "Continuous"
+            ):
+                acq_mode = self.setValue(
+                    "Acquisition mode", "Point by point (without Lock-in)"
+                )
 
             # Start the meter
             m_model = self.getValue("DMM: Model")
@@ -284,6 +287,10 @@ class Driver(InstrumentDriver.InstrumentWorker):
                     )
             elif self._li:
                 self._li.close()
+            if value == "Continuous" and not self._source.support_continuous_sweeping():
+                raise ValueError(
+                    "The selected source does not support continuous sweeps"
+                )
             self._change_meter_acquisition_mode(value)
         elif q_name == "Source: range":
             with self._lock:
@@ -485,6 +492,8 @@ class Driver(InstrumentDriver.InstrumentWorker):
 
         # Center the points in the window of acquisition
         val = self.ramp_extrema(ext, points, padding)
+
+        self._source.select_range(val)
 
         self._source.prepare_ramps(
             [
