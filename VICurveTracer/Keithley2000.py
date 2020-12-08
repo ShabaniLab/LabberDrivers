@@ -77,6 +77,43 @@ class Driver:
                 f"expected {value}"
             )
 
+    def get_averaging_time(self):
+        """"""
+        rsc = self._rsc
+        nplc = int(rsc.query(":VOLT:DC:NPLC?"))
+        average = int(rsc.query(":VOLT:AVER:STAT?"))
+        count = int(rsc.query(":VOLT:AVER:COUN?"))
+        return round((count if average else 1) * nplc / 60, 3)
+
+    def set_averaging_time(self, value):
+        """"""
+        rsc = self._rsc
+        # Use repeating average
+        rsc.write(":VOLT:AVER:TCON REP")
+        nplc = value / (1 / 60)
+        err_10 = nplc % 10
+        err_1 = nplc % 1
+        err_01 = ((10 * nplc) % 1) / 10
+        # Try to prefer larger nplc if possible (those factor are pure guesses)
+        index = np.argmin([err_10, err_1 * 1.5, err_01 * 3])
+        if index == 0:
+            avg = int(nplc // 10)
+            nplc = 10
+        elif index == 1:
+            avg = int(nplc // 1)
+            nplc = 1
+        else:
+            avg = int((10 * nplc) // 1)
+            nplc = 0.1
+
+        rsc.write(f":VOLT:DC:NPLC {nplc}")
+        if avg > 1:
+            rsc.write(f":VOLT:AVER:STAT 1;:VOLT:AVER:COUN {avg}")
+        else:
+            rsc.write(f":VOLT:AVER:STAT 0;:VOLT:AVER:COUN 1")
+
+        return nplc * 1 / 60 * avg
+
     def prepare_acquisition(self, points):
         """Prepare the device to measure a series of points.
 
@@ -127,6 +164,9 @@ class Driver:
         return util.from_binary_block(
             block, 2, self._points * 8, "d", False, np.ndarray
         )
+
+    def read_value(self):
+        return float(self._rsc.query(":READ?"))
 
 
 # Can used for debugging by commenting the import of BiasSource
