@@ -454,7 +454,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
         # Get the source sweep resolution
         res = self._source.get_sweep_resolution()
         if "time" in res:  # The Yokogawa has a finite time resolution of 100 ms
-            possible_pads = np.arange(max(10, int(0.05 * points)))
+            possible_pads = np.arange(2, max(10, int(0.05 * points)))
             extremas = self.ramp_extrema(ext, points, possible_pads)
             times = (
                 2
