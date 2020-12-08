@@ -9,9 +9,7 @@ SRATE = 1000
 
 
 class Driver(VoltMeter):
-    """Keithley 6500 as VICurveTracer volt-meter.
-
-    """
+    """Keithley 6500 as VICurveTracer volt-meter."""
 
     def __init__(self, address):
         self._points = 0
@@ -23,27 +21,22 @@ class Driver(VoltMeter):
         # Use digitized voltage, with a sampling rate of 1 kHz and auto aperture
         rsc.clear()
         rsc.write(f':DIG:FUNC "VOLT";:DIG:VOLT:SRATE {SRATE};:DIG:VOLT:APER AUTO')
+        # Setup signals to allow SRQ on buffer full
         rsc.write(":STAT:OPER:MAP 0, 4918, 4917;")
 
     def close(self):
         self._rsc.close()
 
     def list_ranges(self):
-        """List valid ranges for the Keithley 2000.
-
-        """
+        """List valid ranges for the Keithley 2000."""
         return "100mV, 1V, 10V, 100V, 1000V"
 
     def get_range(self):
-        """Return teh currently active range.
-
-        """
+        """Return teh currently active range."""
         return float(self._rsc.query(":SENS:VOLT:DC:RANG?"))
 
     def set_range(self, value):
-        """Set the range.
-
-        """
+        """Set the range."""
         if value not in (100e-3, 1, 10, 100, 1000):
             raise ValueError("Invalid range specified.")
         resp = self._rsc.query(f":SENS:VOLT:DC:RANG {value};:VOLT:DC:RANG?")
@@ -63,22 +56,73 @@ class Driver(VoltMeter):
         return "1kHz, 500Hz, 250Hz, 200Hz, 100Hz, 50Hz, 20Hz, 10Hz"
 
     def get_acquisition_rate(self):
-        """Return the current acquisition rate.
-
-        """
+        """Return the current acquisition rate."""
         return self._acq_rate
 
     def set_acquisition_rate(self, value):
-        """Set the acquistion rate.
-
-        """
+        """Set the acquistion rate."""
         rate = int(round(value, 1))
         if rate not in (10, 20, 50, 100, 200, 250, 500, 1000):
             raise ValueError("Invalid rate specified.")
         self._acq_rate = rate
 
+    def set_acquisition_mode(self, value):
+        """Switch between continuous and point by point acquisition mode."""
+        rsc = self._rsc
+        if value == "continuous":
+            # Use digitized voltage, with a sampling rate of 1 kHz and auto aperture
+            rsc.clear()
+            rsc.write(f':DIG:FUNC "VOLT";:DIG:VOLT:SRATE {SRATE};:DIG:VOLT:APER AUTO')
+            rsc.write(":STAT:OPER:MAP 0, 4918, 4917;")
+        else:
+            # Use ASCII for single point transfer
+            rsc.write(
+                ':FUNC "VOLT:DC";'
+                f":TRAC:POIN {1};"  # Number of points in the buffer
+                ":FORM:DATA SREAL;"  # Data format
+            )
+
+    def get_averaging_time(self):
+        """"""
+        rsc = self._rsc
+        nplc = int(rsc.query(":VOLT:DC:NPLC?"))
+        average = int(rsc.query(":VOLT:AVER:STAT?"))
+        count = int(rsc.query(":VOLT:AVER:COUN?"))
+        return round((count if average else 1) * nplc / 60, 3)
+
+    def set_averaging_time(self, value):
+        """"""
+        rsc = self._rsc
+        # Use repeating average
+        rsc.write(':VOLT:AVER:TCON "REP"')
+        nplc = value / (1 / 60)
+        err_10 = nplc % 10
+        err_1 = nplc % 1
+        err_01 = ((10 * nplc) % 1) / 10
+        # Try to prefer larger nplc if possible (those factor are pure guesses)
+        index = np.argmin([err_10, err_1 * 1.5, err_01 * 3])
+        if index == 0:
+            avg = int(nplc // 10)
+            nplc = 10
+        elif index == 1:
+            avg = int(nplc // 1)
+            nplc = 1
+        else:
+            avg = int((10 * nplc) // 1)
+            nplc = 0.1
+
+        rsc.write(f":VOLT:DC:NPLC {nplc}")
+        if avg > 1:
+            write(f":VOLT:AVER:STAT 1;:VOLT:AVER:COUN {avg}")
+        else:
+            write(f":VOLT:AVER:STAT 0;:VOLT:AVER:COUN 1")
+
+        return nplc * 1 / 60 * avg
+
     def prepare_acquisition(self, points):
         """Prepare the device to measure a series of points.
+
+        Apply to continuous mode acquisition.
 
         """
         self._points = points = int(round(points * SRATE / self._acq_rate, 1))
@@ -98,6 +142,8 @@ class Driver(VoltMeter):
     def arm_device(self):
         """Make the device ready for a trigger.
 
+        Apply to continuous mode acquisition.
+
         """
         rsc = self._rsc
 
@@ -115,6 +161,8 @@ class Driver(VoltMeter):
 
     def wait_for_data_ready(self):
         """Retrive the data collected after a trigger is received.
+
+        Apply to continuous mode acquisition.
 
         """
         rsc = self._rsc
@@ -134,6 +182,8 @@ class Driver(VoltMeter):
     def retrieve_data(self):
         """Retrive the data collected after a trigger is received.
 
+        Apply to continuous mode acquisition.
+
         """
         self._rsc.write(":DISP:SCR HOME")  # Turn display on
         self._rsc.write(f":TRAC:DATA? 1, {self._points}")
@@ -145,6 +195,9 @@ class Driver(VoltMeter):
         n_avg = int(round(SRATE / self._acq_rate, 1))
         cutoff = len(data) - len(data) % n_avg
         return np.average(data[:cutoff].reshape((-1, n_avg)), axis=-1)
+
+    def read_value(self):
+        return float(self.query(":READ?"))
 
 
 # Can used for debugging by commenting the import of BiasSource
