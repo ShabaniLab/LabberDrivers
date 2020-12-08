@@ -15,9 +15,7 @@ RAMP_TEMPLATE = (
 
 
 class Driver:
-    """Yokogawa GS200 as bias generator.
-
-    """
+    """Yokogawa GS200 as bias generator."""
 
     def __init__(self, address):
         self._rm = rm = pyvisa.ResourceManager()
@@ -59,21 +57,20 @@ class Driver:
             )
 
     def current_value(self):
-        """Get the current value of the output.
-
-        """
+        """Get the current value of the output."""
         return float(self._rsc.query(":SOUR:LEV?"))
 
     def goto_value(self, value, slope):
-        """Go to the specified value immediately.
-
-        """
+        """Go to the specified value immediately."""
         rsc = self._rsc
         curr_value = self.current_value()
         # Program cannot be shorter than 0.1
-        sweep_time = max(abs(value - curr_value) / slope, 0.1)
-        rsc.write(RAMP_TEMPLATE.format(sweep_time=sweep_time, value=value))
-        self._maybe_ramping = True
+        sweep_time = round(abs(value - curr_value) / slope, 1)
+        if sweep_time < 0.1:
+            rsc.write(f":SOUR:LEV {value}")
+        else:
+            rsc.write(RAMP_TEMPLATE.format(sweep_time=sweep_time, value=value))
+            self._maybe_ramping = True
 
     def prepare_ramps(self, ramps: List[Tuple[float, float, float]]):
         """Prepare ramps by creating a program executing them in series.
@@ -98,16 +95,12 @@ class Driver:
         self._ramps = progs
 
     def start_ramp(self, index):
-        """Start the specified ramp.
-
-        """
+        """Start the specified ramp."""
         self._rsc.write(self._ramps[index])
         self._maybe_ramping = True
 
     def is_ramping(self):
-        """Check is the program is done executing.
-
-        """
+        """Check is the program is done executing."""
         if self._maybe_ramping:
             # Check for bit 7 EOP (End of program) in the extended event register
             # We are not ramping if the bit is set
@@ -119,7 +112,7 @@ class Driver:
 
     def get_admissible_reset_rate(self, reset_rate, amplitude):
         """Get an admissible reset rate.
-        
+
         This avoids issue for too fast reset for the system to handle.
         """
         sweep_time = round(amplitude / reset_rate, 1)

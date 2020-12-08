@@ -12,18 +12,16 @@ import numpy as np
 import InstrumentDriver
 
 logger = logging.getLogger(__name__)
-handler = logging.FileHandler(
-    r"C:\Users\Shabani_Lab\Documents\MagnetDebug\log.txt", mode="w"
-)
-handler.setLevel(logging.DEBUG)
-logger.addHandler(handler)
-logger.critical("Test handler")
+# handler = logging.FileHandler(
+#     r"C:\Users\Shabani_Lab\Documents\MagnetDebug\log.txt", mode="w"
+# )
+# handler.setLevel(logging.DEBUG)
+# logger.addHandler(handler)
+# logger.critical("Test handler")
 
 
 class BiasGenerator:
-    """Bias current generator for VICurveTracer.
-
-    """
+    """Bias current generator for VICurveTracer."""
 
     def __init__(self, address):
         pass
@@ -32,55 +30,44 @@ class BiasGenerator:
         pass
 
     def list_ranges(self):
-        """
-        """
+        """"""
         pass
 
     def get_range(self):
-        """
-        """
+        """"""
         pass
 
     def set_range(self, value):
-        """
-        """
+        """"""
         pass
 
     def current_value(self):
-        """
-        """
+        """"""
         pass
 
     def goto_value(self, value, slope):
-        """
-        """
+        """"""
         pass
 
     def prepare_ramps(self, ramps: List[Tuple[float, float, float]]):
-        """
-        """
+        """"""
         pass
 
     def start_ramp(self, index):
-        """
-        """
+        """"""
         pass
 
     def is_ramping(self):
-        """
-        """
+        """"""
         pass
 
     def get_admissible_reset_rate(self, reset_rate, amplitude):
-        """
-        """
+        """"""
         pass
 
 
 class VoltMeter:
-    """Voltmeter for VICurveTracer.
-
-    """
+    """Voltmeter for VICurveTracer."""
 
     def __init__(self, address):
         pass
@@ -89,62 +76,105 @@ class VoltMeter:
         pass
 
     def list_ranges(self):
-        """
-        """
+        """"""
         pass
 
     def get_range(self):
-        """
-        """
+        """"""
         pass
 
     def set_range(self, value):
-        """
-        """
+        """"""
+        pass
+
+    # Continuous or point by point
+    def set_acquisition_mode(self, value):
+        """"""
+        pass
+
+    def get_averaging_time(self):
+        """"""
+        pass
+
+    def set_averaging_time(self, value):
+        """"""
         pass
 
     def list_acquisition_rates(self):
-        """
-        """
+        """"""
         pass
 
     def get_acquisition_rate(self):
-        """
-        """
+        """"""
         pass
 
     def set_acquisition_rate(self, value):
-        """
-        """
+        """"""
         pass
 
     def prepare_acquistion(self, points):
-        """
-        """
+        """"""
         pass
 
     def arm_device(self):
-        """
-        """
+        """"""
         pass
 
     def wait_for_data_ready(self):
-        """
-        """
+        """"""
         pass
 
     def retrieve_data(self):
-        """
+        """"""
+        pass
+
+    def read_value(self):
+        """"""
+        pass
+
+
+class LockIn:
+    """"""
+
+    def get_amplitude(self):
+        pass
+
+    def set_amplitude(self, value):
+        pass
+
+    def list_tcs(self):
+        """"""
+        pass
+
+    def get_tc(self):
+        pass
+
+    def set_tc(self, value):
+        pass
+
+    def get_frequency(self):
+        pass
+
+    def set_frequency(self, value):
+        pass
+
+    def read_value(self):
+        """Read a complex value from the lock-in.
+
+        This method should not wait before taking a measurement.
+
+        The framework ensures a proper wait time.
+
         """
         pass
 
 
 class Driver(InstrumentDriver.InstrumentWorker):
-    """ This class implements the VICurveTracer driver.
+    """This class implements the VICurveTracer driver.
 
     This assumes that the source will trigger the meter when starting a ramp.
 
-    Using the Yoko GS200 and the Keithley 6500 we can expect the bias current 
+    Using the Yoko GS200 and the Keithley 6500 we can expect the bias current
     to be offset by 1-3% of the max value.
 
     """
@@ -153,18 +183,23 @@ class Driver(InstrumentDriver.InstrumentWorker):
         super().__init__(*args, **kwargs)
         self._source: BiasGenerator = None
         self._meter: VoltMeter = None
+        self._li: LockIn = None
         self._lock = RLock()
+        # In Point by point (with Lock-in) this is used to store the LI trace
+        # acquired at the same time as the VI.
+        self._dr_trace = None
         # The first and last points tend to be useless so take more points
         # on each side and discard those
         # The padding is calculated based on the number of points
         self._padding_points = 1
 
     def performOpen(self, options={}):
-        """Perform the operation of opening the instrument connection.
-
-        """
+        """Perform the operation of opening the instrument connection."""
         super().performOpen(options)
         with self._lock:
+            # Get the acquisition mode
+            acq_mode = self.getValue("Acquisition mode")
+
             # Start the source
             s_model = self.getValue("Source: Model")
             s_add = self.getValue("Source: VISA address")
@@ -177,24 +212,39 @@ class Driver(InstrumentDriver.InstrumentWorker):
             cls = importlib.import_module(m_model).Driver
             self._meter = cls(m_add)
 
-            ext = self.getValue("Source: extrema")
-            re_rate = self.getValue("Source: reset rate")
-            points = int(self.getValue("DMM: number of points"))
-            self._meter.set_acquisition_rate(self.getValue("DMM: acquisition rate"))
-            self._padding_points = (points - 1) // 20
-            ac_rate = self.readValueFromOther("DMM: acquisition rate")
+            # Start the lock-in
+            li_model = self.getValue("DMM: Model")
+            li_add = self.getValue("DMM: VISA address")
+            if acq_mode == "Point by point (with Lock-in)":
+                if li_model and li_add:
+                    cls = importlib.import_module(li_model).Driver
+                    self._li = cls(li_add)
+                else:
+                    raise RuntimeError(
+                        "No valid information for Lock-in even though the mode "
+                        "requires a lock-in. Missing:\n"
+                        + ("- Address\n" if not li_add else "")
+                        + ("- Model" if not li_model else "")
+                    )
+            else:
+                self._li = None
 
-            # Center the points in the window of acquisition and add padding
-            self._prepare_ramp(ext, points, ac_rate, re_rate)
+            self._change_meter_acquisition_mode(acq_mode)
+            if acq_mode == "Continuous":
+                ext = self.getValue("Source: extrema")
+                re_rate = self.getValue("Source: reset rate")
 
-            self._meter.prepare_acquisition(points + 2 * self._padding_points)
+                ac_rate = self.readValueFromOther("DMM: acquisition rate")
+
+                # Center the points in the window of acquisition and add padding
+                self._prepare_ramp(ext, points, ac_rate, re_rate)
 
     def performClose(self, bError=False, options={}):
-        """Perform the close instrument connection operation.
-
-        """
+        """Perform the close instrument connection operation."""
         self._source.close()
         self._meter.close()
+        if self._li:
+            self._li.close()
 
     def performSetValue(self, quant, value, sweepRate=0.0, options={}):
         """Perform the Set Value instrument operation.
@@ -206,12 +256,33 @@ class Driver(InstrumentDriver.InstrumentWorker):
         update_ramps = False
         ext = points = ac_rate = re_rate = None
 
-        if q_name in ("Source: VISA address", "DMM: VISA address",):
+        if q_name in (
+            "Source: VISA address",
+            "DMM: VISA address",
+            "Lock-In: VISA address",
+        ):
             pass
 
-        elif q_name in ("Source: Model", "DMM: Model",):
+        elif q_name in ("Source: Model", "DMM: Model", "Lock-In: Model"):
             pass
 
+        elif q_name == "Acquisition mode":
+            if value == "Point by point (with Lock-in)":
+                li_model = self.getValue("DMM: Model")
+                li_add = self.getValue("DMM: VISA address")
+                if li_model and li_add:
+                    cls = importlib.import_module(li_model).Driver
+                    self._li = cls(li_add)
+                else:
+                    raise RuntimeError(
+                        "No valid information for Lock-in even though the mode "
+                        "requires a lock-in. Missing:\n"
+                        + ("- Address\n" if not li_add else "")
+                        + ("- Model" if not li_model else "")
+                    )
+            elif self._li:
+                self._li.close()
+            self._change_meter_acquisition_mode(value)
         elif q_name == "Source: range":
             with self._lock:
                 self._source.set_range(value)
@@ -234,11 +305,33 @@ class Driver(InstrumentDriver.InstrumentWorker):
                 self._meter.prepare_acquisition(points + 2 * self._padding_points)
         elif q_name == "DMM: acquisition rate":
             with self._lock:
-                self._meter.set_acquisition_rate(value)
+                return self._meter.set_acquisition_rate(value)
             update_ramps = True
             ac_rate = value
+        elif q_name == "DMM: averaging time":
+            with self._lock:
+                self._meter.set_averaging_time(value)
+        elif q_name == "Lock-in: frequency":
+            with self._lock:
+                self._li.set_frequency(value)
+        elif q_name == "Lock-in: amplitude":
+            with self._lock:
+                self._li.set_amplitude(value)
+        elif q_name == "Lock-in: time constant":
+            with self._lock:
+                self._li.set_time_constant(value)
+                self._meter.set_averaging_time(
+                    value * self.getValue("Lock-in: settling time")
+                )
+        elif q_name == "Lock-in: settling time":
+            with self._lock:
+                self._meter.set_averaging_time(
+                    value * self.getValue("Lock-in: time constant")
+                )
+        elif q_name == "Lock-in: load resistance":
+            pass
 
-        if update_ramps:
+        if self.getValue("Acquisition mode") == "Continuous" and update_ramps:
             ext = ext or self.getValue("Source: extrema")
             re_rate = re_rate or self.getValue("Source: reset rate")
             points = points or self.getValue("DMM: number of points")
@@ -249,55 +342,30 @@ class Driver(InstrumentDriver.InstrumentWorker):
         return value
 
     def performGetValue(self, quant, options={}):
-        """Perform the Get Value instrument operation.
-
-        """
+        """Perform the Get Value instrument operation."""
         q_name = quant.name
 
         if q_name == "VI curve":
+            acq_mode = self.getValue("Acquisition mode")
             with self._lock:
-                ext = self.getValue("Source: extrema")
-                reset = self.getValue("Source: reset rate")
-                points = self.getValue("DMM: number of points")
-                # Center the points in the window of acquisition
-                init = self.ramp_extrema(ext, points, self._padding_points)
-
-                # Should only happen on the first scan since we reset the value after
-                # setting
-                while self._source.is_ramping():
-                    sleep(0.01)
-                curr = self._source.current_value()
-                logger.critical(f"{curr}")
-                if curr != -init:
-                    self._source.goto_value(-init, reset)
-                    while self._source.is_ramping():
-                        sleep(0.01)
-
-                # The DMM is preconfigured for the right number of points, so simply arm
-                self._meter.arm_device()
-
-                # Start the ramp.
-                self._source.start_ramp(0)
-                sleep(0.1)
-
-                # Wait for the data
-                self._meter.wait_for_data_ready()
-                while self._source.is_ramping():
-                    sleep(0.01)
-
-                # Retrieve the data
-                data = self._meter.retrieve_data()
-                # Remove padding
-                data = data[self._padding_points : -self._padding_points]
-
-                # Reset the source so that it has time to reset
-                self._source.start_ramp(1)
-
+                if acq_mode == "Continuous":
+                    data = self._perform_continuous_acquisition()
+                else:
+                    data = self._perform_point_by_point_acquisition(
+                        "without" in acq_mode
+                    )
                 return quant.getTraceDict(
                     data,
                     x=np.linspace(-ext, ext, points)
                     / self.getValue("Source: load resistance"),
                 )
+
+        if q_name == "dR vs I curve":
+            return quant.getTraceDict(
+                self._dr_trace,
+                x=np.linspace(-ext, ext, points)
+                / self.getValue("Source: load resistance"),
+            )
 
         # For quantities corresponding to software only parameters simply
         # return the value
@@ -310,6 +378,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
             "Source: reset rate",
             "Source: load resistance",
             "DMM: number of points",
+            "Lock-in: load resistance",
         ):
             return quant.getValue()
 
@@ -337,13 +406,37 @@ class Driver(InstrumentDriver.InstrumentWorker):
             with self._lock:
                 return self._meter.get_acquisition_rate()
 
+        elif q_name == "DMM: averaging time":
+            with self._lock:
+                return self._meter.get_averaging_time(value)
+        elif q_name == "Lock-in: frequency":
+            with self._lock:
+                return self._li.get_frequency(value)
+        elif q_name == "Lock-in: amplitude":
+            with self._lock:
+                return self._li.get_amplitude(value)
+        elif q_name == "Lock-in: time constant":
+            with self._lock:
+                value = self._li.get_time_constant(value)
+                # Ensure this setting cannot go out of sync.
+                self._meter.set_averaging_time(
+                    value * self.getValue("Lock-in: settling time")
+                )
+                return value
+        elif q_name == "Lock-in: settling time":
+            with self._lock:
+                value = self.getValue("Lock-in: settling time")
+                # Ensure this setting cannot go out of sync.
+                self._meter.set_averaging_time(
+                    value * self.getValue("Lock-in: time constant")
+                )
         else:
             raise KeyError("Unknown quantity: %s" % q_name)
 
     @staticmethod
     def ramp_extrema(sweep_extrema, points, padding_points):
-        """Extrema of the ramp.
-        
+        """Extrema of the ramp for continuous acquisition.
+
         The value is chosen so that points are centered in each
         acquisition segment.
 
@@ -353,18 +446,14 @@ class Driver(InstrumentDriver.InstrumentWorker):
 
     @staticmethod
     def ramp_speed(sweep_extrema, points, data_rate):
-        """Sweep rate given the amplitude, number of points and selected ac rate.
-
-        """
+        """Sweep rate given the amplitude, number of points and selected ac rate."""
         # Adjusted by comparing curves on very different ranges so that they
         # agree and coompared to a conventional measurement
         # data_rate *= 0.995  # Take into account the slowness of the DMM
         return 2 * sweep_extrema * data_rate / points
 
     def _prepare_ramp(self, ext, points, data_rate, reset_rate):
-        """Prepare a ramp by centering the points and adding padding.
-        
-        """
+        """Prepare a ramp by centering the points and adding padding."""
         # Center the points in the window of acquisition
         pad = self._padding_points
         val = self.ramp_extrema(ext, points, pad)
@@ -379,6 +468,94 @@ class Driver(InstrumentDriver.InstrumentWorker):
                 ),
             ]
         )
+
+    def _change_meter_acquisition_mode(self, mode):
+        """Change the meter configuation based on the acquisition mode."""
+        if "Point by point" in value:
+            self._meter.set_acquisition_mode("point by point")
+            if "without" in value:
+                self._meter.set_averaging_time(
+                    self.getValue("Lock-in: time constant")
+                    * self.getValue("Lock-in: settling time")
+                )
+            else:
+                if "without" in value:
+                    self._meter.set_averaging_time(self.getValue("DMM: averaging time"))
+        else:
+            self._meter.set_acquisition_mode("continuous")
+            self._meter.set_acquisition_rate(self.getValue("DMM: acquisition rate"))
+            points = int(self.getValue("DMM: number of points"))
+            self._padding_points = (points - 1) // 20
+            self._meter.prepare_acquisition(points + 2 * self._padding_points)
+
+    def _perform_continuous_acquisition(self):
+        """Perform a continuous acquisition."""
+        ext = self.getValue("Source: extrema")
+        reset = self.getValue("Source: reset rate")
+        points = self.getValue("DMM: number of points")
+        # Center the points in the window of acquisition
+        init = self.ramp_extrema(ext, points, self._padding_points)
+
+        # Should only happen on the first scan since we reset the value after
+        # setting
+        while self._source.is_ramping():
+            sleep(0.01)
+        curr = self._source.current_value()
+        logger.critical(f"{curr}")
+        if curr != -init:
+            self._source.goto_value(-init, reset)
+            while self._source.is_ramping():
+                sleep(0.01)
+
+        # The DMM is preconfigured for the right number of points, so simply arm
+        self._meter.arm_device()
+
+        # Start the ramp.
+        self._source.start_ramp(0)
+        sleep(0.1)
+
+        # Wait for the data
+        self._meter.wait_for_data_ready()
+        while self._source.is_ramping():
+            sleep(0.01)
+
+        # Retrieve the data
+        data = self._meter.retrieve_data()
+        # Remove padding
+        data = data[self._padding_points : -self._padding_points]
+
+        # Reset the source so that it has time to reset
+        self._source.start_ramp(1)
+
+        return data
+
+    def _perform_point_by_point_acquisition(self, with_li: bool):
+        """Perform a point by point acquisition."""
+        ext = self.getValue("Source: extrema")
+        reset = self.getValue("Source: reset rate")
+        points = self.getValue("DMM: number of points")
+
+        set_points = np.linspace(-ext, ext, points)
+        dmm_vals = np.empty_like(set_points)
+        if with_li:
+            li_vals = np.empty_like(set_points, dtype=complex)
+
+        source = self._source
+        dmm = self._meter
+        li = self._li
+
+        for i, v in enumerate(set_points):
+            source.goto_value(v, reset)
+            dmm_vals[i] = dmm.read_value()
+            if with_li:
+                li_vals[i] = li.read_value()
+
+        self._dr_trace = li_vals / (
+            self.getValue("Lock-in: amplitude")
+            / self.getValue("Lock-in: load resistance")
+        )
+
+        return dmm_vals
 
 
 if __name__ == "__main__":
