@@ -121,6 +121,9 @@ class Driver:
         else:
             return sweep_time
 
+    def get_sweep_resolution(self):
+        return {"time": 0.1}
+
 
 # Can used for debugging by commenting the import of BiasSource
 # if __name__ == "__main__":
