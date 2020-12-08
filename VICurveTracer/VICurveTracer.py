@@ -5,11 +5,10 @@ from math import acos, atan2, copysign, cos, sin, sqrt
 from multiprocessing import RLock
 from threading import Event, Thread
 from time import sleep, time
-from typing import List, Tuple
-
-import numpy as np
+from typing import Dict, List, Tuple
 
 import InstrumentDriver
+import numpy as np
 
 logger = logging.getLogger(__name__)
 # handler = logging.FileHandler(
@@ -63,6 +62,10 @@ class BiasGenerator:
 
     def get_admissible_reset_rate(self, reset_rate, amplitude):
         """"""
+        pass
+
+    def get_sweep_resolution(self) -> Dict[str, float]:
+        """ """
         pass
 
 
@@ -188,10 +191,6 @@ class Driver(InstrumentDriver.InstrumentWorker):
         # In Point by point (with Lock-in) this is used to store the LI trace
         # acquired at the same time as the VI.
         self._dr_trace = None
-        # The first and last points tend to be useless so take more points
-        # on each side and discard those
-        # The padding is calculated based on the number of points
-        self._padding_points = 1
 
     def performOpen(self, options={}):
         """Perform the operation of opening the instrument connection."""
@@ -300,12 +299,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
         elif q_name == "DMM: number of points":
             update_ramps = True
             points = int(value)
-            self._padding_points = (points - 1) // 20
-            with self._lock:
-                self._meter.prepare_acquisition(points + 2 * self._padding_points)
         elif q_name == "DMM: acquisition rate":
-            with self._lock:
-                return self._meter.set_acquisition_rate(value)
             update_ramps = True
             ac_rate = value
         elif q_name == "DMM: averaging time":
@@ -409,12 +403,15 @@ class Driver(InstrumentDriver.InstrumentWorker):
         elif q_name == "DMM: averaging time":
             with self._lock:
                 return self._meter.get_averaging_time(value)
+
         elif q_name == "Lock-in: frequency":
             with self._lock:
                 return self._li.get_frequency(value)
+
         elif q_name == "Lock-in: amplitude":
             with self._lock:
                 return self._li.get_amplitude(value)
+
         elif q_name == "Lock-in: time constant":
             with self._lock:
                 value = self._li.get_time_constant(value)
@@ -423,6 +420,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
                     value * self.getValue("Lock-in: settling time")
                 )
                 return value
+
         elif q_name == "Lock-in: settling time":
             with self._lock:
                 value = self.getValue("Lock-in: settling time")
@@ -449,18 +447,32 @@ class Driver(InstrumentDriver.InstrumentWorker):
         """Sweep rate given the amplitude, number of points and selected ac rate."""
         # Adjusted by comparing curves on very different ranges so that they
         # agree and coompared to a conventional measurement
-        # data_rate *= 0.995  # Take into account the slowness of the DMM
         return 2 * sweep_extrema * data_rate / points
 
     def _prepare_ramp(self, ext, points, data_rate, reset_rate):
         """Prepare a ramp by centering the points and adding padding."""
+        # Get the source sweep resolution
+        res = self._source.get_sweep_resolution()
+        if "time" in res:  # The Yokogawa has a finite time resolution of 100 ms
+            possible_pads = np.arange(max(10, int(0.05 * points)))
+            extremas = self.ramp_extrema(ext, points, possible_pads)
+            times = (
+                2
+                * extremas
+                / self.ramp_speed(extremas, points + 2 * possible_pads, data_rate)
+            )
+            # This selects the padding giving us the ramping time leading to the
+            # smallest error
+            padding = possible_pads[np.argmin(times % res["time"])]
+        else:
+            raise ValueError("Unsupported resolution format")
+
         # Center the points in the window of acquisition
-        pad = self._padding_points
-        val = self.ramp_extrema(ext, points, pad)
-        # raise ValueError(data_rate)
+        val = self.ramp_extrema(ext, points, padding)
+
         self._source.prepare_ramps(
             [
-                (-val, val, self.ramp_speed(val, points + 2 * pad, data_rate)),
+                (-val, val, self.ramp_speed(val, points + 2 * padding, data_rate)),
                 (
                     val,
                     -val,
@@ -468,6 +480,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
                 ),
             ]
         )
+        self._meter.prepare_acquisition()
 
     def _change_meter_acquisition_mode(self, mode):
         """Change the meter configuation based on the acquisition mode."""
