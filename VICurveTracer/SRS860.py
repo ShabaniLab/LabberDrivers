@@ -14,6 +14,9 @@ class Driver(LockIn):
             address, write_termination="\n", read_termination="\n"
         )
 
+    def close(self):
+        self._rsc.close()
+
     def get_amplitude(self):
         return float(self._rsc.query("SLVL?"))
 
