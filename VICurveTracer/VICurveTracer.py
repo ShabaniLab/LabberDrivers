@@ -587,6 +587,9 @@ class Driver(InstrumentDriver.InstrumentWorker):
         dmm = self._meter
         li = self._li
 
+        # Ensure we are using the proper range
+        self._source.select_range(ext)
+
         # Should only happen on the first scan since we reset the value after
         # setting
         while self._source.is_ramping():

@@ -1,7 +1,8 @@
 from threading import Thread
-import pyvisa
+from math import copysign
 from typing import List, Tuple
 
+import pyvisa
 from VICurveTracer import BiasGenerator
 
 
@@ -52,10 +53,11 @@ class Driver:
         rsc = self._rsc
         curr_value = self.current_value()
         step = slope * 0.05
+        step = copysign(step, value - curr_value)
         if abs(value - curr_value) < step:
             rsc.write(f":SOUR:VOLT {value}")
         else:
-            self._worker_thread = Thread(target=self._got_to, args=(value, step))
+            self._worker_thread = Thread(target=self._go_to, args=(value, step))
             self._worker_thread.start()
 
     def is_ramping(self):

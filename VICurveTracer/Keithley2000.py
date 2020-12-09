@@ -77,6 +77,16 @@ class Driver:
                 f"expected {value}"
             )
 
+    def set_acquisition_mode(self, value):
+        """Switch between continuous and point by point acquisition mode."""
+        rsc = self._rsc
+        if value == "continuous":
+            # Use digitized voltage, with a sampling rate of 1 kHz and auto aperture
+            rsc.clear()
+        else:
+            # Use ASCII for single point transfer
+            rsc.write(':FUNC "VOLT:DC";:FORM:DATA ASC;:INIT:CONT 0')  # Data format
+
     def get_averaging_time(self):
         """"""
         rsc = self._rsc
@@ -111,6 +121,9 @@ class Driver:
             rsc.write(f":VOLT:AVER:STAT 1;:VOLT:AVER:COUN {avg}")
         else:
             rsc.write(f":VOLT:AVER:STAT 0;:VOLT:AVER:COUN 1")
+
+        # Ensure the continuous triggering is disabled
+        rsc.write(":INIT:CONT 0")
 
         return nplc * 1 / 60 * avg
 
