@@ -28,7 +28,7 @@ class BiasGenerator:
     def close(self):
         raise NotImplementedError
 
-    def select_range(self):
+    def select_range(self, voltage, load_resistance):
         """"""
         raise NotImplementedError
 
@@ -496,7 +496,9 @@ class Driver(InstrumentDriver.InstrumentWorker):
         # Center the points in the window of acquisition
         val = self.ramp_extrema(ext, points, padding)
 
-        self._source.select_range(val)
+        self._source.select_range(
+            val, self.getValue("Source: load resistance")
+        )
 
         self._source.prepare_ramps(
             [
@@ -588,7 +590,9 @@ class Driver(InstrumentDriver.InstrumentWorker):
         li = self._li
 
         # Ensure we are using the proper range
-        self._source.select_range(ext)
+        self._source.select_range(
+            ext, self.getValue("Source: load resistance")
+        )
 
         # Should only happen on the first scan since we reset the value after
         # setting
