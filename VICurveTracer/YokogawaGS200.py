@@ -40,7 +40,7 @@ class Driver:
     def close(self):
         self._rsc.close()
 
-    def select_range(self, value):
+    def select_range(self, value, load_resistance):
         if value < 12e-3:
             r = 10e-3
         elif value < 120e-3:

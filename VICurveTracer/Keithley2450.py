@@ -24,7 +24,7 @@ class Driver:
     def close(self):
         self._rsc.close()
 
-    def select_range(self, value):
+    def select_range(self, value, load_resistance):
         if value < 21e-3:
             r = 20e-3
         elif value < 210e-3:
@@ -42,6 +42,15 @@ class Driver:
         if float(resp) != r:
             raise RuntimeError(
                 f"Failed to set range (after setting value is {resp}," f"expected {r}"
+            )
+
+        resp = self._rsc.query(
+            f":SOUR:VOLT:ILIMIT {1.1 * r / load_resistance};:SOUR:VOLT:ILIMIT?"
+        )
+        if float(resp) != r:
+            raise RuntimeError(
+                f"Failed to set current limit (after setting value is {resp},"
+                f"expected {1.1 * r / load_resistance}"
             )
 
     def current_value(self):
