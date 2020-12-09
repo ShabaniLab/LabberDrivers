@@ -58,7 +58,9 @@ class Driver(LockIn):
             raise ValueError(
                 f"Admissible Tc for SR860 are: {self.list_tcs}, got {value}"
             )
-        return self.list_tcs().index(value)
+        value = self.list_tcs().index(value)
+        self._rsc.write(f"OFLT {value}")
+        return value
 
     def get_frequency(self):
         return float(self._rsc.query("FREQ?"))

@@ -1,5 +1,6 @@
-from threading import Thread
 from math import copysign
+from threading import Thread
+from time import sleep
 from typing import List, Tuple
 
 import pyvisa
@@ -44,13 +45,14 @@ class Driver:
                 f"Failed to set range (after setting value is {resp}," f"expected {r}"
             )
 
+        curr_limit = 1.1 * r / load_resistance
         resp = self._rsc.query(
-            f":SOUR:VOLT:ILIMIT {1.1 * r / load_resistance};:SOUR:VOLT:ILIMIT?"
+            f":SOUR:VOLT:ILIMIT {curr_limit};:SOUR:VOLT:ILIMIT?"
         )
-        if float(resp) != r:
+        if float(resp) != curr_limit:
             raise RuntimeError(
                 f"Failed to set current limit (after setting value is {resp},"
-                f"expected {1.1 * r / load_resistance}"
+                f"expected {limit}"
             )
 
     def current_value(self):
@@ -68,6 +70,7 @@ class Driver:
         else:
             self._worker_thread = Thread(target=self._go_to, args=(value, step))
             self._worker_thread.start()
+            sleep(0.02)
 
     def is_ramping(self):
         """Check is the program is done executing."""
