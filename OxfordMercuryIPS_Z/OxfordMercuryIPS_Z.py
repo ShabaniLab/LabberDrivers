@@ -25,27 +25,15 @@ class Driver(VISA_Driver):
 
     def performGetValue(self, quant, options={}):
         """Perform the Get Value instrument operation"""
-        # check type of quantity
-        # check quantity
-        if quant.name == 'Magnetic Field':
-            get_cmd = 'READ:DEV:GRPZ:PSU:SIG:FLD'
-            value = float(self._do_read(get_cmd)[:-1])
-        else:
-            # for all other cases, call VISA driver
-            value = VISA_Driver.performGetValue(self, quant, options)
+        value = float(self._do_read(quant.get_cmd)[:-1])
         return value
         
     def checkIfSweeping(self, quant, options={}):
-        target = float(self._do_read('READ:DEV:GRPZ:PSU:SIG:FSET')[:-1])
         self.wait(0.1)
-        currentValue = self.performGetValue(quant, options)
-        if abs(target - currentValue) < float(quant.sweep_res):
-            status = self._do_read('READ:DEV:GRPZ:PSU:ACTN')
-            # check that power supply is in hold mode
-            if status == 'HOLD':
-                return(False)
-        self.wait(0.1)
-        return(True)
+        # check that power supply is in hold mode
+        if self._do_read('READ:DEV:GRPZ:PSU:ACTN') == 'HOLD':
+            return False
+        return True
 
     def performStopSweep(self, quant, options={}):
         self._do_write('SET:DEV:GRPZ:PSU:ACTN:HOLD')
@@ -71,8 +59,8 @@ class Driver(VISA_Driver):
             raise ValueError('A wrong board id was used. Use READ:SYS:CAT to'
                              ' get the valid board ids.')
         elif answer.endswith('INVALID'):
-            msg = 'The ITC failed to answer to {}'
-            raise RuntimeError(msg.format(get_cmd))
+            msg = 'The ITC failed to answer to {}, its answer was {}'
+            raise RuntimeError(msg.format(get_cmd, msg))
         elif answer.endswith('N/A'):
             msg = ('The iTC does not appear to support this feature. It may'
                    ' be because a wrong UID was used. Use READ:SYS:CAT to'
