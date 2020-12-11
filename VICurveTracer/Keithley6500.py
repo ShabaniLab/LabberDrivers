@@ -13,11 +13,16 @@ class Driver(VoltMeter):
 
     def __init__(self, address):
         self._points = 0
-        self._rm = rm = pyvisa.ResourceManager()
-        self._rsc = rsc = rm.open_resource(
-            address, write_termination="\n", read_termination="\n"
-        )
         self._acq_rate = 100
+        self._rm = pyvisa.ResourceManager()
+        self._address = address
+        self.open()
+
+    def open(self):
+        self._rsc = rsc = self._rm.open_resource(
+            self._address, write_termination="\n", read_termination="\n"
+        )
+
         rsc.clear()
         # Setup signals to allow SRQ on buffer full
         rsc.write(":STAT:OPER:MAP 0, 4918, 4917;")
@@ -190,7 +195,14 @@ class Driver(VoltMeter):
         return np.average(data[:cutoff].reshape((-1, n_avg)), axis=-1)
 
     def read_value(self):
-        return float(self._rsc.query(":READ?"))
+        i = 0
+        while i < 10:
+            try:
+                return float(self._rsc.query(":READ?"))
+            except pyvisa.errors.VisaIOError:
+                self.close()
+                self.open()
+                i += 1
 
 
 # Can used for debugging by commenting the import of BiasSource
