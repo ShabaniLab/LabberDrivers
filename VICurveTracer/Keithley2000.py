@@ -7,9 +7,7 @@ import numpy as np
 
 
 class Driver:
-    """Keithley 2000 as VICurveTracer volt-meter.
-
-    """
+    """Keithley 2000 as VICurveTracer volt-meter."""
 
     def __init__(self, address):
         self._points = 0
@@ -20,26 +18,22 @@ class Driver:
         # Disable auto-ranging
         rsc.clear()
         rsc.write(":VOLT:DC:RANG:AUTO 0")
+        # Ensure the continuous triggering is disabled
+        rsc.write(":INIT:CONT 0")
 
     def close(self):
         self._rsc.close()
 
     def list_ranges(self):
-        """List valid ranges for the Keithley 2000.
-
-        """
+        """List valid ranges for the Keithley 2000."""
         return "100mV, 1V, 10V, 100V, 1000V"
 
     def get_range(self):
-        """Return teh currently active range.
-
-        """
+        """Return teh currently active range."""
         return float(self._rsc.query(":VOLT:DC:RANG?"))
 
     def set_range(self, value):
-        """Set the range.
-
-        """
+        """Set the range."""
         if value not in (100e-3, 1, 10, 100, 1000):
             raise ValueError("Invalid range specified.")
         resp = self._rsc.query(f":VOLT:DC:RANG {value};:VOLT:DC:RANG?")
@@ -59,15 +53,11 @@ class Driver:
         return "6kHz, 600Hz, 60Hz, 6Hz"
 
     def get_acquisition_rate(self):
-        """Return the current acquisition rate.
-
-        """
+        """Return the current acquisition rate."""
         return float(self._rsc.query(":VOLT:DC:NPLC?")) * 60
 
     def set_acquisition_rate(self, value):
-        """Set the acquistion rate.
-
-        """
+        """Set the acquistion rate."""
         if value not in (6, 60, 600, 6000):
             raise ValueError("Invalid range specified.")
         resp = self._rsc.query(f":VOLT:DC:NPLC {value/60:.2f};:VOLT:DC:NPLC?")
@@ -128,9 +118,7 @@ class Driver:
         return nplc * 1 / 60 * avg
 
     def prepare_acquisition(self, points):
-        """Prepare the device to measure a series of points.
-
-        """
+        """Prepare the device to measure a series of points."""
         if points > 1024:
             raise ValueError("Keithley 2000 is limited to 1024 points.")
         self._points = points = int(points)
@@ -150,9 +138,7 @@ class Driver:
         )
 
     def arm_device(self):
-        """Make the device ready for a trigger.
-
-        """
+        """Make the device ready for a trigger."""
         rsc = self._rsc
         # Clear the status register as otherwise the service request will fail
         rsc.write(":STATUS:PRESET;*CLS")
@@ -161,15 +147,11 @@ class Driver:
         rsc.write(":TRAC:CLE;:STAT:MEAS:ENAB 512;*SRE 1;:DATA:FEED:CONT NEXT;:INIT")
 
     def wait_for_data_ready(self):
-        """Retrive the data collected after a trigger is received.
-
-        """
+        """Retrive the data collected after a trigger is received."""
         self._rsc.wait_for_srq(timeout=60000)
 
     def retrieve_data(self):
-        """Retrive the data collected after a trigger is received.
-
-        """
+        """Retrive the data collected after a trigger is received."""
         self._rsc.write(":DISP:ENAB 1")  # Turn display on
         self._rsc.write(":DATA:DATA?")
         block = self._rsc.read_bytes(self._points * 8 + 3)

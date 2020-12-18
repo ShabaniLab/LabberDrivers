@@ -374,8 +374,8 @@ class Driver(InstrumentDriver.InstrumentWorker):
             points = self.getValue("DMM: number of points")
             return quant.getTraceDict(
                 self._dr_trace,
-                x=np.linspace(-ext, ext, points)
-                / self.getValue("Source: load resistance"),
+                # x=np.linspace(-ext, ext, points)
+                # / self.getValue("Source: load resistance"),
             )
 
         # For quantities corresponding to software only parameters simply
