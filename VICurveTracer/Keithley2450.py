@@ -47,12 +47,12 @@ class Driver:
 
         curr_limit = 1.1 * r / load_resistance
         resp = self._rsc.query(
-            f":SOUR:VOLT:ILIMIT {curr_limit};:SOUR:VOLT:ILIMIT?"
+            f":SENS:CURR:RANG:AUTO 1;:SOUR:VOLT:ILIMIT {curr_limit};:SOUR:VOLT:ILIMIT?"
         )
         if float(resp) != curr_limit:
             raise RuntimeError(
                 f"Failed to set current limit (after setting value is {resp},"
-                f"expected {limit}"
+                f"expected {curr_limit}"
             )
 
     def current_value(self):
