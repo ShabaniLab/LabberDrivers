@@ -54,7 +54,8 @@ class Driver:
         else:
             raise ValueError(f"No admissible range for {value}")
 
-        resp = self._rsc.query(f":SOUR:RANG {r};:SOUR:RANG?", delay=0.2)
+        self._rsc.write(f":SOUR:RANG {r}")
+        resp = self._rsc.query(":SOUR:RANG?", delay=0.2)
         if float(resp) != r:
             raise RuntimeError(
                 f"Failed to set range (after setting value is {resp}," f"expected {r}"
