@@ -187,10 +187,14 @@ class Driver(InstrumentDriver.InstrumentWorker):
         self._source: BiasGenerator = None
         self._meter: VoltMeter = None
         self._li: LockIn = None
+        self._li_voltage: LockIn = None
         self._lock = RLock()
         # In Point by point (with Lock-in) this is used to store the LI trace
-        # acquired at the same time as the VI.
+        # acquired at the same time as the IV.
+        self._bias = None
+        self._realbias = None
         self._dr_trace = None
+        self._dI_trace = None
         # Padding points help overcome issues with respect of the ramp by the
         # source
         self._padding_points = 0
@@ -238,11 +242,28 @@ class Driver(InstrumentDriver.InstrumentWorker):
             else:
                 self._li = None
 
+            # Start the voltage lock-in
+            # li_model = self.getValue("Lock-In: Model")
+            # li_add = self.getValue("Lock-In: VISA address")
+            # if acq_mode == "Point by point (with Lock-in)":
+            #     if li_model and li_add:
+            #         cls = importlib.import_module(li_model).Driver
+            #         self._li = cls(li_add)
+            #     else:
+            #         raise RuntimeError(
+            #             "No valid information for Lock-in even though the mode "
+            #             "requires a lock-in. Missing:\n"
+            #             + ("- Address\n" if not li_add else "")
+            #             + ("- Model" if not li_model else "")
+            #         )
+            # else:
+            #     self._li = None
+
             self._change_meter_acquisition_mode(acq_mode)
             if acq_mode == "Continuous":
                 ext = self.getValue("Source: extrema")
                 re_rate = self.getValue("Source: reset rate")
-                points = self.getValue("DMM: number of points")
+                points = self.getValue("Number of points")
                 ac_rate = self.readValueFromOther("DMM: acquisition rate")
 
                 # Center the points in the window of acquisition and add padding
@@ -254,6 +275,8 @@ class Driver(InstrumentDriver.InstrumentWorker):
         self._meter.close()
         if self._li:
             self._li.close()
+        # if self._li:
+        #     self._li.close()
 
     def performSetValue(self, quant, value, sweepRate=0.0, options={}):
         """Perform the Set Value instrument operation.
@@ -269,14 +292,18 @@ class Driver(InstrumentDriver.InstrumentWorker):
             "Source: VISA address",
             "DMM: VISA address",
             "Lock-In: VISA address",
+            # "Lock-In: VISA address",
+            "Source: Model",
+            "DMM: Model",
+            "Lock-In: Model",
+            # "Lock-In: Model",
             "DC Voltage divider",
             "AC Voltage divider",
             "Trans-impedance amplifier: gain",
             "Inline resistance",
+            "Bias offset",
+            "DMM: averaging time Lock-in",
         ):
-            pass
-
-        elif q_name in ("Source: Model", "DMM: Model", "Lock-In: Model"):
             pass
 
         elif q_name == "Acquisition mode":
@@ -293,6 +320,31 @@ class Driver(InstrumentDriver.InstrumentWorker):
                         + ("- Address\n" if not li_add else "")
                         + ("- Model" if not li_model else "")
                     )
+            # elif value == "Point by point (with 2 Lock-in)":
+            #     li_model = self.getValue("Lock-In: Model")
+            #     li_add = self.getValue("Lock-In: VISA address")
+            #     if li_model and li_add:
+            #         cls = importlib.import_module(li_model).Driver
+            #         self._li = cls(li_add)
+            #     else:
+            #         raise RuntimeError(
+            #             "No valid information for Lock-in even though the mode "
+            #             "requires a lock-in. Missing:\n"
+            #             + ("- Address\n" if not li_add else "")
+            #             + ("- Model" if not li_model else "")
+            #         )
+            #     li_model = self.getValue("Lock-In: Model")
+            #     li_add = self.getValue("Lock-In: VISA address")
+            #     if li_model and li_add:
+            #         cls = importlib.import_module(li_model).Driver
+            #         self._li = cls(li_add)
+            #     else:
+            #         raise RuntimeError(
+            #             "No valid information for Lock-in even though the mode "
+            #             "requires a lock-in. Missing:\n"
+            #             + ("- Address\n" if not li_add else "")
+            #             + ("- Model" if not li_model else "")
+            #         )
             elif self._li:
                 self._li.close()
             if value == "Continuous" and not self._source.support_continuous_sweeping():
@@ -312,7 +364,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
         elif q_name == "DMM: range":
             with self._lock:
                 self._meter.set_range(value)
-        elif q_name == "DMM: number of points":
+        elif q_name == "Number of points":
             update_ramps = True
             points = int(value)
         elif q_name == "DMM: acquisition rate":
@@ -324,25 +376,28 @@ class Driver(InstrumentDriver.InstrumentWorker):
         elif q_name == "Lock-in: frequency":
             with self._lock:
                 self._li.set_frequency(value)
+                # XXX deal with LI voltage
         elif q_name == "Lock-in: amplitude":
             with self._lock:
                 self._li.set_amplitude(value)
+                # XXX deal with LI voltage
         elif q_name == "Lock-in: time constant":
             with self._lock:
                 self._li.set_tc(value)
                 self._meter.set_averaging_time(
-                    value * self.getValue("Lock-in: settling time")
+                    self.getValue("DMM: averaging time Lock-in")
                 )
+                # XXX deal with LI voltage
         elif q_name == "Lock-in: settling time":
             with self._lock:
                 self._meter.set_averaging_time(
-                    value * self.getValue("Lock-in: time constant")
+                    self.getValue("DMM: averaging time Lock-in")
                 )
 
         if self.getValue("Acquisition mode") == "Continuous" and update_ramps:
             ext = ext or self.getValue("Source: extrema")
             re_rate = re_rate or self.getValue("Source: reset rate")
-            points = points or self.getValue("DMM: number of points")
+            points = points or self.getValue("Number of points")
             ac_rate = ac_rate or self.getValue("DMM: acquisition rate")
             # Center the points in the window of acquisition and add padding
             self._prepare_ramp(ext, points, ac_rate, re_rate)
@@ -356,7 +411,8 @@ class Driver(InstrumentDriver.InstrumentWorker):
         if q_name == "IV curve":
             acq_mode = self.getValue("Acquisition mode")
             ext = self.getValue("Source: extrema")
-            points = self.getValue("DMM: number of points")
+            points = self.getValue("Number of points")
+            offset = self.getValue("Bias offset")
             with self._lock:
                 if acq_mode == "Continuous":
                     data = self._perform_continuous_acquisition()
@@ -364,18 +420,31 @@ class Driver(InstrumentDriver.InstrumentWorker):
                     data = self._perform_point_by_point_acquisition(
                         "without" not in acq_mode
                     )
+                bias = (np.linspace(-ext, ext, points) / self.getValue("DC Voltage divider"))
+                self._bias = bias
+
                 return quant.getTraceDict(
                     data,
-                    x=np.linspace(-ext, ext, points)
-                    / self.getValue("DC Voltage divider"),
+                    x=bias,
                 )
+
+        if q_name == "dIdV vs V curve":
+            return quant.getTraceDict(
+                self._dI_trace, x=self._bias
+            )
 
         if q_name == "dsigma vs V curve":
             ext = self.getValue("Source: extrema")
-            points = self.getValue("DMM: number of points")
+            points = self.getValue("Number of points")
             return quant.getTraceDict(
-                self._dr_trace,
-                x=np.linspace(-ext, ext, points) / self.getValue("DC Voltage divider"),
+                self._dr_trace, x=self._bias
+            )
+
+        if q_name == "Real voltagebias":
+            ext = self.getValue("Source: extrema")
+            points = self.getValue("Number of points")
+            return quant.getTraceDict(
+                self._realbias, x=self._bias
             )
 
         # For quantities corresponding to software only parameters simply
@@ -388,13 +457,16 @@ class Driver(InstrumentDriver.InstrumentWorker):
             "DMM: VISA address",
             "Lock-In: Model",
             "Lock-In: VISA address",
+            # XXX duplicate Li voltage entries
             "Source: extrema",
             "Source: reset rate",
-            "DMM: number of points",
+            "Number of points",
             "DC Voltage divider",
             "AC Voltage divider",
             "Trans-impedance amplifier: gain",
             "Inline resistance",
+            "Bias offset",
+            "DMM: averaging time Lock-in",
         ):
             return quant.getValue()
 
@@ -441,19 +513,11 @@ class Driver(InstrumentDriver.InstrumentWorker):
         elif q_name == "Lock-in: time constant":
             with self._lock:
                 value = self._li.get_tc()
-                # Ensure this setting cannot go out of sync.
-                self._meter.set_averaging_time(
-                    value * self.getValue("Lock-in: settling time")
-                )
                 return value
 
         elif q_name == "Lock-in: settling time":
             with self._lock:
                 value = self.getValue("Lock-in: settling time")
-                # Ensure this setting cannot go out of sync.
-                self._meter.set_averaging_time(
-                    value * self.getValue("Lock-in: time constant")
-                )
             return value
         else:
             raise KeyError("Unknown quantity: %s" % q_name)
@@ -518,8 +582,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
             self._meter.set_acquisition_mode("point by point")
             if "without" not in mode:
                 self._meter.set_averaging_time(
-                    self.getValue("Lock-in: time constant")
-                    * self.getValue("Lock-in: settling time")
+                    self.getValue("DMM: averaging time Lock-in")
                 )
             else:
                 if "without" in mode:
@@ -527,7 +590,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
         else:
             ext = self.getValue("Source: extrema")
             re_rate = self.getValue("Source: reset rate")
-            points = self.getValue("DMM: number of points")
+            points = self.getValue("Number of points")
             ac_rate = self.getValue("DMM: acquisition rate")
             self._meter.set_acquisition_mode("continuous")
             self._meter.set_acquisition_rate(ac_rate)
@@ -537,7 +600,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
         """Perform a continuous acquisition."""
         ext = self.getValue("Source: extrema")
         reset = self.getValue("Source: reset rate")
-        points = self.getValue("DMM: number of points")
+        points = self.getValue("Number of points")
         # Center the points in the window of acquisition
         init = self.ramp_extrema(ext, points, self._padding_points)
 
@@ -578,38 +641,48 @@ class Driver(InstrumentDriver.InstrumentWorker):
         """Perform a point by point acquisition."""
         ext = self.getValue("Source: extrema")
         reset = self.getValue("Source: reset rate")
-        points = self.getValue("DMM: number of points")
+        points = self.getValue("Number of points")
+        offset = self.getValue("Bias offset")
+        both_li = with_li and "2" in self.getValue("Acquisition mode")
 
-        set_points = np.linspace(-ext, ext, points)
+        set_points = np.linspace(-ext + offset * self.getValue("DC Voltage divider"),
+                    ext + offset * self.getValue("DC Voltage divider"), points)
         dmm_vals = np.empty_like(set_points)
         if with_li:
             li_vals = np.empty_like(set_points, dtype=complex)
-
+            # XXX create storage for LI 2 value
+        t = self.getValue("Lock-in: settling time") * self.getValue(
+            "Lock-in: time constant"
+        )
         source = self._source
         dmm = self._meter
         li = self._li
+        # XXX get LI
 
         # Ensure we are using the proper range
         self._source.select_range(
             # 10 resistance to ground of the divider
-            ext,
-            10 * self.getValue("DC Voltage divider"),
+            ext + abs(offset) * self.getValue("DC Voltage divider"),
+            10 * self.getValue("DC Voltage divider")
         )
 
         # Should only happen on the first scan since we reset the value after
         # setting
         while self._source.is_ramping():
-            sleep(0.01)
+            sleep(3)
         # Go to the first point and wait
         source.goto_value(set_points[0], reset)
         while source.is_ramping():
-            sleep(0.01)
+            sleep(3)
 
         for i, v in enumerate(set_points):
             source.goto_value(v, reset)
+            sleep(t)
             dmm_vals[i] = dmm.read_value()
             if with_li:
                 li_vals[i] = li.read_value()
+            # if both_li:
+            # XXX get LI 2 value
 
         # Go to the first point and wait
         source.goto_value(set_points[0], reset)
@@ -618,9 +691,9 @@ class Driver(InstrumentDriver.InstrumentWorker):
         dmm_vals /= self.getValue("Trans-impedance amplifier: gain")
 
         if with_li:
+            self._dI_trace = li_vals
             # Convert AC measurement to conductance
-            sigma = (
-                li_vals
+            sigma = ( abs(li_vals)
                 / self.getValue("Trans-impedance amplifier: gain")
                 / (
                     self.getValue("Lock-in: amplitude")
@@ -632,6 +705,11 @@ class Driver(InstrumentDriver.InstrumentWorker):
                 / (2 * cs.e ** 2 / cs.h)
                 / (1 - sigma * self.getValue("Inline resistance"))
             )
+            self._realbias = (set_points / self.getValue("DC Voltage divider")
+            - offset
+            - dmm_vals * self.getValue("Inline resistance")
+            )
+        # Conversion for both li
 
         return dmm_vals
 

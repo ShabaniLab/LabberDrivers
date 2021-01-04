@@ -45,7 +45,7 @@ class Driver:
                 f"Failed to set range (after setting value is {resp}," f"expected {r}"
             )
 
-        curr_limit = 1.1 * r / load_resistance
+        curr_limit = round(1.1 * r / load_resistance, 6)
         resp = self._rsc.query(
             f":SENS:CURR:RANG:AUTO 1;:SOUR:VOLT:ILIMIT {curr_limit};:SOUR:VOLT:ILIMIT?"
         )
