@@ -122,6 +122,7 @@ class IPSPowerSupply:
         # Rely only on the status to determine if we are sweeping
         # Checking the field value is a bad idea since it does not reflect if
         # we are sweeping or not.
+        sleep(0.2)
         status = self._do_read("READ:DEV:GRP{}:PSU:ACTN".format(self._axis))
         # check that power supply is in hold mode
         if status == "HOLD":
@@ -173,7 +174,8 @@ class IPSPowerSupply:
         start = time()
         for t, m, f, r in zip(times, targets_mask, targets, rates):
             while time() - start < t:
-                sleep(0.001)
+                sleep(0.0001)
+
             if m:
                 self.set_target_field(f)
             self.set_rate(r)
@@ -1060,6 +1062,7 @@ class Driver(VISA_Driver):
             raise KeyError("Unknown quantity: %s" % q_name)
 
     def checkIfSweeping(self, quant, options={}):
+        self.wait(0.2)
         sweeping = {
             axis: supply.check_if_sweeping()
             for axis, supply in self._power_supplies.items()
