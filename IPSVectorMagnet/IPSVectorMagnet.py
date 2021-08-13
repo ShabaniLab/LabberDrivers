@@ -950,7 +950,21 @@ class Driver(VISA_Driver):
         # In fast ramping mode we use the maximum rate determine on one
         # axis on all axis to speed up the process.
         if self.getValue("Ramping mode") == "Fast between point":
-            rates = [max(rates)] * 3
+            final_target = []
+            max_rate = []
+            for rate, target in zip(rates, targets):
+                if isinstance(rate, float):
+                    max_rate.append(rate)
+                else:
+                    max_rate.append(max(rate))
+                if isinstance(target, float):
+                    final_target.append(target)
+                else:
+                    final_target.append(target[-1])
+
+            rates = [max(max_rate)] * 3
+            targets = final_target
+            times = None
 
         self._sweep_all_axis(targets, rates, times)
 
