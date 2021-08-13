@@ -385,8 +385,8 @@ MODELS = {"Keithley 2450": Keithley2450}
 def xyz_axis_to_angles(x, y, z):
     """Convert an xyz representation of a vector to two angles.
 
-    The first angle is the inclination in the spherical coordinate system, the
-    second is the azimuthal angle counted from x.
+    The first angle is the inclination (in z-axis) in the spherical coordinate system, the
+    second is the azimuthal angle between x and y.
 
     """
     theta = np.rad2deg(atan2(sqrt(x ** 2 + y ** 2), z))
@@ -417,7 +417,7 @@ class Converter:
         coordinate_change = [
             Rotation.from_euler("z", axis[1], degrees=True),
             Rotation.from_euler("y", axis[0], degrees=True),
-            Rotation.from_euler("z", phi_offset - axis[1], degrees=True),
+            Rotation.from_euler("z", phi_offset - axis[0], degrees=True),
         ]
         self._forward_change = (
             coordinate_change[2].inv()
@@ -431,6 +431,7 @@ class Converter:
 
     def to_new_basis(self, vec, no_offset=False):
         """Convert a vector expressed in the old basis."""
+        vec = np.array(vec)
         if not no_offset:
             if len(vec.shape) == 1:
                 vec[2] -= self._z_offset
@@ -441,6 +442,7 @@ class Converter:
     def from_new_basis(self, vec, no_offset=False):
         """Convert a vector expressed in the new basis."""
         vec = self._backward_change.apply(vec)
+        vec = np.array(vec)
         if not no_offset:
             if not hasattr(vec, "shape") or len(vec.shape) == 1:
                 vec[2] += self._z_offset
@@ -532,7 +534,8 @@ class CylindricalConverter(Converter):
         # We keep the rate to set at the beginning of each time interval
         x_rate = -rate * state[0] * np.sin(phis)[:-1]
         y_rate = rate * state[0] * np.cos(phis)[:-1]
-        z_vals = state[2] * np.ones_like(phis)[1:]
+        z_rate = rate * state[2] * np.ones_like(phis)[:-1]
+        # z_vals = state[2] * np.ones_like(phis)[1:]
 
         # We need the times in second
         return (
@@ -552,7 +555,7 @@ class SphericalConverter(Converter):
     def convert_to_xyz(self, r, theta, phi):
         theta = np.deg2rad(theta)
         phi = np.deg2rad(phi)
-        x, y, z = r * cos(phi) * sin(theta), r * sin(phi) * sin(theta), r * cos(theta)
+        x, y, z = r * cos(phi) * sin(theta), r * sin(theta) * sin(phi), r * cos(theta)
         return self.from_new_basis(np.array((x, y, z)))
 
     def convert_from_xyz(self, x, y, z):
@@ -560,7 +563,7 @@ class SphericalConverter(Converter):
         r = sqrt(x ** 2 + y ** 2 + z ** 2)
         if not r:
             return 0, 0, 0
-        theta = np.rad2deg(acos(z / r))
+        theta = np.rad2deg(atan2(sqrt(x ** 2 + y ** 2), z))
         phi = np.rad2deg(atan2(y, x))
         return r, theta, phi
 
@@ -621,9 +624,9 @@ class SphericalConverter(Converter):
             z_vals = (state[0] * np.cos(angles))[1:]
 
             # We keep the rate to set at the beginning of each time interval
-            x_rate = (rate * state[0] * np.cos(angles) * cos(phi))[:-1]
-            y_rate = (rate * state[0] * np.cos(angles) * sin(phi))[:-1]
-            z_rate = (-rate * state[0] * np.sin(angles))[:-1]
+            x_rate = (rate * state[0] * np.sin(angles) * cos(phi))[:-1]
+            y_rate = (rate * state[0] * np.sin(angles) * sin(phi))[:-1]
+            z_rate = -(rate * state[0] * np.cos(angles))[:-1]
 
         elif axis == "phi":
             # Compute the intermediate angles spaced by one degree
@@ -645,9 +648,9 @@ class SphericalConverter(Converter):
             z_vals = (state[0] * cos(theta) * np.ones_like(angles))[1:]
 
             # We keep the rate to set at the beginning of each time interval
-            x_rate = (-rate * state[0] * sin(theta) * np.sin(angles))[:-1]
-            y_rate = (rate * state[0] * sin(theta) * np.cos(angles))[:-1]
-            z_rate = np.zeros_like(angles)[:-1]
+            x_rate = (rate * state[0] * sin(theta) * np.cos(angles))[:-1]
+            y_rate = (rate * state[0] * sin(theta) * np.sin(angles))[:-1]
+            z_rate = -rate * state[0] * cos(theta) * np.ones_like(angles)[:-1]
 
         # We need the times in second
         return (
@@ -697,15 +700,15 @@ class Driver(VISA_Driver):
             #   previous axis in the direct order (normal Z -> yz angle)
             if "X" in ref_mode:
                 values = (
-                    self.getValue("Direction YXangle"),
                     self.getValue("Direction ZXangle"),
+                    self.getValue("Direction YXangle"),
                 )
-            if "Y" in ref_mode:
+            elif "Y" in ref_mode:
                 values = (
                     self.getValue("Direction ZYangle"),
                     self.getValue("Direction XYangle"),
                 )
-            if "Z" in ref_mode:
+            elif "Z" in ref_mode:
                 values = (
                     self.getValue("Direction XZangle"),
                     self.getValue("Direction YZangle"),
@@ -820,7 +823,7 @@ class Driver(VISA_Driver):
                     angle1 = value
                     angle2 = self.getValue("Direction ZXangle")
                 else:
-                    angle1 = self.getValue("Direction ZXangle")
+                    angle1 = self.getValue("Direction YXangle")
                     angle2 = value
             elif "Y" in ref_mode:
                 if "ZY" in q_name:
@@ -830,13 +833,13 @@ class Driver(VISA_Driver):
                     angle1 = self.getValue("Direction ZYangle")
                     angle2 = value
             else:
-                if "XZangle" in q_name:
+                if "XZ" in q_name:
                     angle1 = value
                     angle2 = self.getValue("Direction YZangle")
                 else:
                     angle1 = self.getValue("Direction XZangle")
                     angle2 = value
-            self._update_reference_frame("Plane", (angle1, angle2))
+            self._update_reference_frame(ref_mode, (angle1, angle2))
 
         elif q_name == "Phi offset":
             mode = self.getValue("Specification mode")
@@ -983,7 +986,11 @@ class Driver(VISA_Driver):
             "Direction theta",
             "Direction phi",
             "Direction XZangle",
+            "Direction XYangle",
             "Direction YZangle",
+            "Direction YXangle",
+            "Direction ZXangle",
+            "Direction ZYangle",
             "Phi offset",
             "Bz offset",
             "Field X rate",
@@ -1135,7 +1142,7 @@ class Driver(VISA_Driver):
             self.setValue("Direction x", sin(theta) * cos(phi))
             self.setValue("Direction y", sin(theta) * sin(phi))
             self.setValue("Direction z", cos(theta))
-        elif mode.startswith("Plane"):
+        elif mode.startswith("Plane "):
             ang1, ang2 = values
             # ang 1 is the angle between the normal axis (cf mode name) and the
             # following axis in the direct order (Z normal, angle is xz). Since we
@@ -1148,15 +1155,15 @@ class Driver(VISA_Driver):
                 r1axis = "y"
                 r2axis = "x"
             elif "X" in mode:
-                norm_vector = [1, 0, 0]
-                r1axis = "z"
-                r2axis = "y"
+                norm_vector = [0, 0, 1]
+                r1axis = "y"
+                r2axis = "z"
             elif "Y" in mode:
-                norm_vector = [0, 1, 0]
+                norm_vector = [0, 0, 1]
                 r1axis = "x"
                 r2axis = "z"
             else:
-                raise ValueError("Unknown reference frame specification")
+                raise ValueError("Unknown reference frame specification: %s" % mode)
             rot1 = Rotation.from_euler(r1axis, ang1, degrees=True)
             rot2 = Rotation.from_euler(r2axis, ang2, degrees=True)
             x, y, z = (rot1 * rot2).apply(norm_vector)
@@ -1167,7 +1174,7 @@ class Driver(VISA_Driver):
             self.setValue("Direction theta", theta)
             self.setValue("Direction phi", phi)
         else:
-            raise ValueError("Unknown reference frame specification")
+            raise ValueError("Unknown reference frame specification: %s" % mode)
 
         theta = self.getValue("Direction theta")
         phi = self.getValue("Direction phi")
