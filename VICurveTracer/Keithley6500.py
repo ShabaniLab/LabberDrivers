@@ -113,7 +113,7 @@ class Driver(VoltMeter):
         if avg > 1:
             rsc.write(f":VOLT:AVER:STAT 1;:VOLT:AVER:COUN {avg}")
         else:
-            rsc.write(f":VOLT:AVER:STAT 0;:VOLT:AVER:COUN 1")
+            rsc.write(f":VOLT:AVER:STAT 1;:VOLT:AVER:COUN 1")
 
         return nplc * 1 / 60 * avg
 
