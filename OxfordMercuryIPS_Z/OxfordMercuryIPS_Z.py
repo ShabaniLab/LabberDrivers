@@ -5,7 +5,7 @@ from VISA_Driver import VISA_Driver
 
 class Driver(VISA_Driver):
     """ This class implements the Oxford Mercury IPS driver"""
-
+    
 
     def performSetValue(self, quant, value, sweepRate=0.0, options={}):
         """Perform the Set Value instrument operation. This function should
@@ -18,7 +18,7 @@ class Driver(VISA_Driver):
             self._do_write('SET:DEV:GRPZ:PSU:SIG:FSET:'+  str(value))
             self._do_write('SET:DEV:GRPZ:PSU:ACTN:RTOS')
         else:
-            # run standard VISA case
+            # run standard VISA case 
             value = VISA_Driver.performSetValue(self, quant, value, sweepRate, options)
         return value
 
@@ -27,7 +27,7 @@ class Driver(VISA_Driver):
         """Perform the Get Value instrument operation"""
         value = float(self._do_read(quant.get_cmd)[:-1])
         return value
-
+        
     def checkIfSweeping(self, quant, options={}):
         self.wait(0.1)
         # check that power supply is in hold mode
@@ -37,8 +37,8 @@ class Driver(VISA_Driver):
 
     def performStopSweep(self, quant, options={}):
         self._do_write('SET:DEV:GRPZ:PSU:ACTN:HOLD')
-
-
+        
+       
     def _do_write(self, msg):
         """
         """
@@ -60,7 +60,7 @@ class Driver(VISA_Driver):
                              ' get the valid board ids.')
         elif answer.endswith('INVALID'):
             msg = 'The ITC failed to answer to {}, its answer was {}'
-            raise RuntimeError(msg.format(get_cmd, answer))
+            raise RuntimeError(msg.format(get_cmd, msg))
         elif answer.endswith('N/A'):
             msg = ('The iTC does not appear to support this feature. It may'
                    ' be because a wrong UID was used. Use READ:SYS:CAT to'
@@ -68,6 +68,6 @@ class Driver(VISA_Driver):
             raise ValueError(msg.format(answer))
         # Extract the numeric answer with its unit
         return answer[len(get_cmd) + 1:].split(':', 1)[0]
-
+                             
 if __name__ == '__main__':
     pass
