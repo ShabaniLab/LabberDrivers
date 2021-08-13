@@ -18,8 +18,6 @@ class Driver:
         # Disable auto-ranging
         rsc.clear()
         rsc.write(":VOLT:DC:RANG:AUTO 0")
-        # Ensure the continuous triggering is disabled
-        rsc.write(":INIT:CONT 0")
 
     def close(self):
         self._rsc.close()
