@@ -743,7 +743,7 @@ class Driver(VISA_Driver):
                 self.setValue(qname.format(axis.upper()), False)
         super().performClose()
 
-    def performSetValue(self, quant, value, sweepRate=0.0, options={}):
+    def performSetValue(self, quant, value, sweepRate=50.0e-3, options={}):
         """Perform the Set Value instrument operation.
 
         This function should return the actual value set by the instrument
@@ -1090,6 +1090,9 @@ class Driver(VISA_Driver):
         for i, (rate, resolution) in enumerate(zip(rates, resolutions)):
             if isinstance(rate, float) and abs(rate) < resolution:
                 rates[i] = copysign(resolution, rate)
+        _rates = np.array(rates)
+        _rates[:] = max_rates[:]
+        rates = list(_rates)
         self._validate_rates(rates, max_rates)
         logger.critical("sweep targets: {}, rates: {}".format(targets, rates))
 
