@@ -403,7 +403,7 @@ class Converter:
 
     """
 
-    def __init__(self, axis, phi_offset, z_offset):
+    def __init__(self, axis, theta_offset, phi_offset, z_offset):
 
         axis_format, axis = axis
         if axis_format == "xyz":
@@ -415,9 +415,12 @@ class Converter:
         # frame to the new frame we need to apply the inverse rotations in the
         # reverse order
         coordinate_change = [
-            Rotation.from_euler("z", axis[1], degrees=True),
-            Rotation.from_euler("y", axis[0], degrees=True),
-            Rotation.from_euler("z", phi_offset - axis[0], degrees=True),
+            # Rotation.from_euler("z", axis[1], degrees=True),
+            # Rotation.from_euler("y", axis[0], degrees=True),
+            # Rotation.from_euler("z", phi_offset - axis[0], degrees=True),
+            Rotation.from_euler("z", 0, degrees=True),
+            Rotation.from_euler("y", theta_offset, degrees=True),
+            Rotation.from_euler("z", phi_offset, degrees=True),
         ]
         self._forward_change = (
             coordinate_change[2].inv()
@@ -539,7 +542,7 @@ class CylindricalConverter(Converter):
 
         # We need the times in second
         return (
-            (phis[:-1] - phis[0]) / rate * 60,
+            (phis[:-1] - phis[0]) / rate / 60,
             self.from_new_basis(np.array([x_vals, y_vals, z_vals]).T).T,
             self.from_new_basis(np.array([x_rate, y_rate, z_rate]).T, no_offset=True).T,
         )
@@ -624,10 +627,16 @@ class SphericalConverter(Converter):
             z_vals = (state[0] * np.cos(angles))[1:]
 
             # We keep the rate to set at the beginning of each time interval
-            x_rate = (rate * state[0] * np.sin(angles) * cos(phi))[:-1]
-            y_rate = (rate * state[0] * np.sin(angles) * sin(phi))[:-1]
-            z_rate = -(rate * state[0] * np.cos(angles))[:-1]
-
+            # x_rate = (rate * state[0] * np.sin(angles) * cos(phi))[:-1]
+            # y_rate = (rate * state[0] * np.sin(angles) * sin(phi))[:-1]
+            # z_rate = -(rate * state[0] * np.cos(angles))[:-1]
+            x_rate = (rate * state[0] * np.cos(angles) * cos(phi))[:-1]
+            y_rate = (rate * state[0] * np.cos(angles) * sin(phi))[:-1]
+            z_rate = -(rate * state[0] * np.sin(angles))[:-1]
+            # x_rate[x_rate < 0.0002] = 0.0002
+            # y_rate[y_rate < 0.0002] = 0.0002
+            # z_rate[z_rate < 0.0002] = 0.0002
+            
         elif axis == "phi":
             # Compute the intermediate angles spaced by one degree
             angles = np.linspace(
@@ -648,10 +657,13 @@ class SphericalConverter(Converter):
             z_vals = (state[0] * cos(theta) * np.ones_like(angles))[1:]
 
             # We keep the rate to set at the beginning of each time interval
-            x_rate = (rate * state[0] * sin(theta) * np.cos(angles))[:-1]
-            y_rate = (rate * state[0] * sin(theta) * np.sin(angles))[:-1]
-            z_rate = -rate * state[0] * cos(theta) * np.ones_like(angles)[:-1]
-
+            # x_rate = (rate * state[0] * sin(theta) * np.cos(angles))[:-1]
+            # y_rate = (rate * state[0] * sin(theta) * np.sin(angles))[:-1]
+            # z_rate = -rate * state[0] * cos(theta) * np.ones_like(angles)[:-1]
+            x_rate = -(rate * state[0] * sin(theta) * np.sin(angles))[:-1]
+            y_rate = (rate * state[0] * sin(theta) * np.cos(angles))[:-1]
+            z_rate = np.zeros_like(angles)[:-1]
+            
         # We need the times in second
         return (
             (angles[:-1] - angles[0]) / rate * 60,
@@ -845,24 +857,36 @@ class Driver(VISA_Driver):
             mode = self.getValue("Specification mode")
             theta = self.getValue("Direction theta")
             phi = self.getValue("Direction phi")
+            theta_offset = self.getValue("Theta offset")
             z_offset = self.getValue("Bz offset")
-            self._create_converter(mode, theta, phi, value, z_offset)
+            self._create_converter(mode, theta, phi, theta_offset, value, z_offset)
             self._update_fields()
 
+        elif q_name == "Theta offset":
+            mode = self.getValue("Specification mode")
+            theta = self.getValue("Direction theta")
+            phi = self.getValue("Direction phi")
+            phi_offset = self.getValue("Phi offset")
+            z_offset = self.getValue("Bz offset")
+            self._create_converter(mode, theta, phi, value, phi_offset, z_offset)
+            self._update_fields()
+        
         elif q_name == "Bz offset":
             mode = self.getValue("Specification mode")
             theta = self.getValue("Direction theta")
             phi = self.getValue("Direction phi")
             phi_offset = self.getValue("Phi offset")
-            self._create_converter(mode, theta, phi, phi_offset, value)
+            theta_offset = self.getValue("Theta offset")
+            self._create_converter(mode, theta, phi, theta_offset, phi_offset, value)
             self._update_fields()
 
         elif q_name == "Specification mode":
             theta = self.getValue("Direction theta")
             phi = self.getValue("Direction phi")
             phi_offset = self.getValue("Phi offset")
+            theta_offset = self.getValue("Theta offset")
             z_offset = self.getValue("Bz offset")
-            self._create_converter(value, theta, phi, phi_offset, z_offset)
+            self._create_converter(value, theta, phi, theta_offset, phi_offset, z_offset)
             self._update_fields()
 
         else:
@@ -1005,6 +1029,7 @@ class Driver(VISA_Driver):
             "Direction YXangle",
             "Direction ZXangle",
             "Direction ZYangle",
+            "Theta offset",
             "Phi offset",
             "Bz offset",
             "Field X rate",
@@ -1115,9 +1140,9 @@ class Driver(VISA_Driver):
         qname = "Power supply {} axis: Driver running"
         self.setValue(qname.format(axis), True)
 
-    def _create_converter(self, mode, theta, phi, phi_offset, z_offset):
+    def _create_converter(self, mode, theta, phi, theta_offset, phi_offset, z_offset):
         """Create a converter"""
-        args = (("angles", (theta, phi)), phi_offset, z_offset)
+        args = (("angles", (theta, phi)), theta_offset, phi_offset, z_offset)
         if mode == "XYZ":
             self._converter = Converter(*args)
         elif mode == "Cylindrical":
@@ -1193,9 +1218,10 @@ class Driver(VISA_Driver):
         theta = self.getValue("Direction theta")
         phi = self.getValue("Direction phi")
         phi_offset = self.getValue("Phi offset")
+        theta_offset = self.getValue("Theta offset")
         z_offset = self.getValue("Bz offset")
         mode = self.getValue("Specification mode")
-        self._create_converter(mode, theta, phi, phi_offset, z_offset)
+        self._create_converter(mode, theta, phi, theta_offset, phi_offset, z_offset)
         self._update_fields()
 
     def _validate_targets(self, targets):
