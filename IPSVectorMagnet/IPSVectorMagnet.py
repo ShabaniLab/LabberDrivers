@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import logging
 import re
-from math import sin, cos, sqrt, atan2, acos, copysign
+from math import sin, cos, sqrt, atan2, atan, acos, copysign
 from threading import Thread, Event
 from multiprocessing import RLock
 from time import time, sleep
@@ -532,10 +532,9 @@ class CylindricalConverter(Converter):
         z_vals = state[2] * np.ones_like(phis)[1:]
 
         # We keep the rate to set at the beginning of each time interval
-        x_rate = -rate * state[0] * np.sin(phis)[:-1]
-        y_rate = rate * state[0] * np.cos(phis)[:-1]
+        x_rate = rate * state[0] * np.cos(phis)[:-1]
+        y_rate = rate * state[0] * np.sin(phis)[:-1]
         z_rate = rate * state[2] * np.ones_like(phis)[:-1]
-        # z_vals = state[2] * np.ones_like(phis)[1:]
 
         # We need the times in second
         return (
@@ -626,7 +625,7 @@ class SphericalConverter(Converter):
             # We keep the rate to set at the beginning of each time interval
             x_rate = (rate * state[0] * np.sin(angles) * cos(phi))[:-1]
             y_rate = (rate * state[0] * np.sin(angles) * sin(phi))[:-1]
-            z_rate = -(rate * state[0] * np.cos(angles))[:-1]
+            z_rate = (rate * state[0] * np.cos(angles))[:-1]
 
         elif axis == "phi":
             # Compute the intermediate angles spaced by one degree
@@ -650,7 +649,7 @@ class SphericalConverter(Converter):
             # We keep the rate to set at the beginning of each time interval
             x_rate = (rate * state[0] * sin(theta) * np.cos(angles))[:-1]
             y_rate = (rate * state[0] * sin(theta) * np.sin(angles))[:-1]
-            z_rate = -rate * state[0] * cos(theta) * np.ones_like(angles)[:-1]
+            z_rate = (rate * state[0] * cos(theta) * np.ones_like(angles))[:-1]
 
         # We need the times in second
         return (
@@ -954,9 +953,9 @@ class Driver(VISA_Driver):
             max_rate = []
             for rate, target in zip(rates, targets):
                 if isinstance(rate, float):
-                    max_rate.append(rate)
+                    max_rate.append(abs(rate))
                 else:
-                    max_rate.append(max(rate))
+                    max_rate.append(max(abs(rate)))
                 if isinstance(target, float):
                     final_target.append(target)
                 else:
