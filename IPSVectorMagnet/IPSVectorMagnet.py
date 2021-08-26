@@ -699,8 +699,8 @@ class Driver(VISA_Driver):
             #   previous axis in the direct order (normal Z -> yz angle)
             if "X" in ref_mode:
                 values = (
-                    self.getValue("Direction ZXangle"),
                     self.getValue("Direction YXangle"),
+                    self.getValue("Direction ZXangle"),
                 )
             elif "Y" in ref_mode:
                 values = (
@@ -1156,36 +1156,56 @@ class Driver(VISA_Driver):
             self.setValue("Direction y", sin(theta) * sin(phi))
             self.setValue("Direction z", cos(theta))
         elif mode.startswith("Plane "):
-            ang1, ang2 = values
+            ang1, ang2 = values 
             # ang 1 is the angle between the normal axis (cf mode name) and the
             # following axis in the direct order (Z normal, angle is xz). Since we
             # count angles positively from the normal to the axis, this angle
             # is positive using the direct orientation, since we need to rotate by
             # minus this angle for the correction we add a minus sign.
+            
             ang1 *= -1
+
             if "Z" in mode:
                 norm_vector = [0, 0, 1]
                 r1axis = "y"
                 r2axis = "x"
+                rot1 = Rotation.from_euler(r1axis, ang1, degrees=True)
+                rot2 = Rotation.from_euler(r2axis, ang2, degrees=True)
+                x, y, z = (rot1 * rot2).apply(norm_vector)
+                self.setValue("Direction x", x)
+                self.setValue("Direction y", y)
+                self.setValue("Direction z", z)
+                theta, phi = xyz_axis_to_angles(x, y, z)
+                self.setValue("Direction theta", theta)
+                self.setValue("Direction phi", phi)
             elif "X" in mode:
-                norm_vector = [0, 0, 1]
-                r1axis = "y"
-                r2axis = "z"
+                norm_vector = [1, 0, 0]
+                r1axis = "z"
+                r2axis = "y"
+                rot1 = Rotation.from_euler(r1axis, ang1, degrees=True)
+                rot2 = Rotation.from_euler(r2axis, -ang2, degrees=True)
+                x, y, z = (rot1 * rot2).apply(norm_vector)
+                self.setValue("Direction x", x)
+                self.setValue("Direction y", y)
+                self.setValue("Direction z", z)
+                theta, phi = xyz_axis_to_angles(x, y, z)
+                self.setValue("Direction theta", 90-theta)
+                self.setValue("Direction phi", phi)
             elif "Y" in mode:
-                norm_vector = [0, 0, 1]
-                r1axis = "x"
-                r2axis = "z"
+                norm_vector = [0, 1, 0]
+                r1axis = "z"
+                r2axis = "x"
+                rot1 = Rotation.from_euler(r1axis, ang1, degrees=True)
+                rot2 = Rotation.from_euler(r2axis, ang2, degrees=True)
+                x, y, z = (rot1 * rot2).apply(norm_vector)
+                self.setValue("Direction x", x)
+                self.setValue("Direction y", y)
+                self.setValue("Direction z", z)
+                theta, phi = xyz_axis_to_angles(x, y, z)
+                self.setValue("Direction theta", -theta)
+                self.setValue("Direction phi", -phi)
             else:
                 raise ValueError("Unknown reference frame specification: %s" % mode)
-            rot1 = Rotation.from_euler(r1axis, ang1, degrees=True)
-            rot2 = Rotation.from_euler(r2axis, ang2, degrees=True)
-            x, y, z = (rot1 * rot2).apply(norm_vector)
-            self.setValue("Direction x", x)
-            self.setValue("Direction y", y)
-            self.setValue("Direction z", z)
-            theta, phi = xyz_axis_to_angles(x, y, z)
-            self.setValue("Direction theta", theta)
-            self.setValue("Direction phi", phi)
         else:
             raise ValueError("Unknown reference frame specification: %s" % mode)
 
