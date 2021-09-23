@@ -25,9 +25,13 @@ class Driver(VISA_Driver):
 
     def performGetValue(self, quant, options={}):
         """Perform the Get Value instrument operation"""
-        value = float(self._do_read(quant.get_cmd)[:-1])
-        return value
-
+       # value = float(self._do_read(quant.get_cmd)[:-1])
+        answer = self.askAndLog(quant.get_cmd, False)
+        quantity = answer[len(quant.get_cmd) + 1:].split(':', 1)[0]
+        if quantity.lower() in ('o','on','off'):
+            return quant.getValueFromCmdString(quantity)
+        return float(self._do_read(quant.get_cmd)[:-1])
+        
     def checkIfSweeping(self, quant, options={}):
         self.wait(0.1)
         # check that power supply is in hold mode
