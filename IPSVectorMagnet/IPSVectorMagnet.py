@@ -122,6 +122,7 @@ class IPSPowerSupply:
         # Rely only on the status to determine if we are sweeping
         # Checking the field value is a bad idea since it does not reflect if
         # we are sweeping or not.
+        sleep(0.2)
         status = self._do_read("READ:DEV:GRP{}:PSU:ACTN".format(self._axis))
         # check that power supply is in hold mode
         if status == "HOLD":
@@ -1169,7 +1170,7 @@ class Driver(VISA_Driver):
                 norm_vector = [0, 0, 1]
                 r1axis = "y"
                 r2axis = "x"
-                rot1 = Rotation.from_euler(r1axis, ang1, degrees=True)
+                rot1 = Rotation.from_euler(r1axis, ang1+ang2, degrees=True)
                 rot2 = Rotation.from_euler(r2axis, ang2, degrees=True)
                 x, y, z = (rot1 * rot2).apply(norm_vector)
                 self.setValue("Direction x", x)
@@ -1182,9 +1183,12 @@ class Driver(VISA_Driver):
                 norm_vector = [1, 0, 0]
                 r1axis = "z"
                 r2axis = "y"
-                rot1 = Rotation.from_euler(r1axis, ang1, degrees=True)
+                rot1 = Rotation.from_euler(r1axis, ang1+ang2, degrees=True)
                 rot2 = Rotation.from_euler(r2axis, -ang2, degrees=True)
-                x, y, z = (rot1 * rot2).apply(norm_vector)
+                # rot1 = Rotation.from_euler('zy', [ang1,-ang2], degrees=True)
+                # rot2 = Rotation.from_euler(r2axis, -ang2, degrees=True)
+                x, y, z = (rot1*rot2).apply(norm_vector)
+                # x, y, z = (rot1).apply(norm_vector)
                 self.setValue("Direction x", x)
                 self.setValue("Direction y", y)
                 self.setValue("Direction z", z)
@@ -1195,7 +1199,7 @@ class Driver(VISA_Driver):
                 norm_vector = [0, 1, 0]
                 r1axis = "z"
                 r2axis = "x"
-                rot1 = Rotation.from_euler(r1axis, ang1, degrees=True)
+                rot1 = Rotation.from_euler(r1axis, ang1+ang2, degrees=True)
                 rot2 = Rotation.from_euler(r2axis, ang2, degrees=True)
                 x, y, z = (rot1 * rot2).apply(norm_vector)
                 self.setValue("Direction x", x)
