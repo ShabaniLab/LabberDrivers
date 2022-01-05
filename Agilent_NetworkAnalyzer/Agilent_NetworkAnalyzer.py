@@ -72,7 +72,9 @@ class Driver(VISA_Driver):
                 # create new measurement, if enabled is true
                 if value:
                     newName = 'LabC_%s' % param
+                    # self.writeAndLog("CALC:PAR:DEF '%s',%s" % (newName, param))
                     self.writeAndLog("CALC:PAR:EXT '%s','%s'" % (newName, param))
+
                     # show on PNA screen
                     iTrace = 1 + ['S11', 'S21', 'S12', 'S22'].index(param)
     #                sPrev = self.askAndLog('DISP:WIND:CAT?')
@@ -105,10 +107,10 @@ class Driver(VISA_Driver):
             # if Lorentzian:
             elif self.getValue('Sweep type') == 'Lorentzian':
                 # prepare VNA for segment sweep
-                self.writeAndLog(':SENS:SWE:TYPE SEGM') 
-                self.writeAndLog('DISP:WIND:TABL SEGM') 
+                self.writeAndLog(':SENS:SWE:TYPE SEGM')
+                self.writeAndLog('DISP:WIND:TABL SEGM')
         else:
-            # run standard VISA case 
+            # run standard VISA case
             value = VISA_Driver.performSetValue(self, quant, value, sweepRate, options)
         return value
 
@@ -143,32 +145,69 @@ class Driver(VISA_Driver):
                 # if not in continous mode, trig from computer
                 bWaitTrace = self.getValue('Wait for new trace')
                 bAverage = self.getValue('Average')
-                # wait for trace, either in averaging or normal mode
+                # # wait for trace, either in averaging or normal mode
+                # if bWaitTrace:
+                #     if bAverage:
+                #         # set channels 1-4 to set event when average complete (bit 1 start)
+                #         self.writeAndLog(':SENS:AVER:CLE;:STAT:OPER:AVER1:ENAB 30;:ABOR;:SENS:AVER:CLE;')
+                #     else:
+                #         self.writeAndLog('*CLS;:ABOR;INIT;TRIG:SING;')
+                #         self.writeAndLog('*OPC')
+                #     # wait some time before first check
+                #     self.wait(0.03)
+                #     bDone = False
+                    # while (not bDone) and (not self.isStopped()):
+                    #     # check if done
+                    #     if bAverage:
+                    #         sAverage = self.askAndLog('STAT:OPER:COND?')
+                    #         # sAverage = self.askAndLog('STAT:OPER:AVER1:COND?')
+                    #         bDone = int(sAverage)>0
+                    #     else:
+                    #         stb = int(self.askAndLog('*ESR?'))
+                    #         # raise RuntimeError(stb)
+                    #         bDone = (stb & 1) > 0
+                    #     if not bDone:
+                    #         self.wait(0.1)
+                    # # if stopped, don't get data
+                    # if self.isStopped():
+                    #     self.writeAndLog('*CLS;')  #:INIT:CONT ON;')
+                    #     return []
+                                   # wait for trace, either in averaging or normal mode
                 if bWaitTrace:
-                    if bAverage:
-                        # set channels 1-4 to set event when average complete (bit 1 start)
-                        self.writeAndLog(':SENS:AVER:CLE;:STAT:OPER:AVER1:ENAB 30;:ABOR;:SENS:AVER:CLE;')
+                    if self.getModel() not in ('E8364B', 'E5063A'):
+                        self.writeAndLog(":ABOR;:TRIG:SOUR BUS;:INIT:CONT OFF;:INIT:IMM;")
+                        if bAverage:
+                            self.writeAndLog(':SENS:AVER:CLE;:STAT:OPER:AVER1:ENAB 30;:ABOR;:SENS:AVER:CLE;')
+                            self.writeAndLog(':TRIG:SOUR EXT; :TRIG:AVER ON;')
+                            self.writeAndLog(':TRIG:SING;')
+
                     else:
                         self.writeAndLog('*CLS;:ABOR;INIT;TRIG:SING;')
-                        self.writeAndLog('*OPC') 
+                    self.writeAndLog('*OPC')
+
                     # wait some time before first check
                     self.wait(0.03)
                     bDone = False
                     while (not bDone) and (not self.isStopped()):
                         # check if done
-                        if bAverage:
-                            sAverage = self.askAndLog('STAT:OPER:AVER1:COND?')
-                            bDone = int(sAverage)>0
-                        else:
-                            stb = int(self.askAndLog('*ESR?'))
-                            # raise RuntimeError(stb)
-                            bDone = (stb & 1) > 0
+                        stb = int(self.askAndLog('*ESR?'))
+                        bDone = (stb & 1) > 0
+
+                        # if bAverage:
+                        #     sAverage = self.askAndLog('STAT:OPER:COND?')
+                        #     # sAverage = self.askAndLog('STAT:OPER:AVER1:COND?')
+                        #     bDone = int(sAverage)>0
+                        # else:
+                        #     stb = int(self.askAndLog('*ESR?'))
+                        #     # raise RuntimeError(stb)
+                        #     bDone = (stb & 1) > 0
                         if not bDone:
                             self.wait(0.1)
                     # if stopped, don't get data
                     if self.isStopped():
-                        self.writeAndLog('*CLS;')  #:INIT:CONT ON;')
+                        self.writeAndLog('*CLS;:TRIG:SOUR EXT;:TRIG:AVER ON;:ABOR;')
                         return []
+
                 # get data as float32, convert to numpy array
                 if self.getModel() in ('E5071C', 'E5063A'):
                     # new trace handling, use trace numbers
@@ -186,7 +225,7 @@ class Driver(VISA_Driver):
                 nData = int(nByte/4)
                 nPts = int(nData/2)
                 # get data to numpy array
-                vData = np.frombuffer(sData[(i0+2+nDig):(i0+2+nDig+nByte)], 
+                vData = np.frombuffer(sData[(i0+2+nDig):(i0+2+nDig+nByte)],
                                       dtype='>f', count=nData)
                 # data is in I0,Q0,I1,Q1,I2,Q2,.. format, convert to complex
                 mC = vData.reshape((nPts,2))
@@ -203,7 +242,7 @@ class Driver(VISA_Driver):
                 nByte = int(xData[i0+2:i0+2+nDig])
                 nData = int(nByte/4)
                 # get data to numpy array
-                xData = np.frombuffer(xData[(i0+2+nDig):(i0+2+nDig+nByte)], 
+                xData = np.frombuffer(xData[(i0+2+nDig):(i0+2+nDig+nByte)],
                                       dtype='>f', count=nData)
                 value = quant.getTraceDict(vComplex, x=xData)
 
@@ -243,7 +282,7 @@ class Driver(VISA_Driver):
             # for all other cases, call VISA driver
             value = VISA_Driver.performGetValue(self, quant, options)
         return value
-        
+
 
     def getActiveMeasurements(self):
         """Retrieve and a list of measurement/parameters currently active"""
@@ -266,7 +305,7 @@ class Driver(VISA_Driver):
             lAll = sAll.split(',')
             nMeas = len(lAll)//2
             for n in range(nMeas):
-                sName = lAll[2*n] 
+                sName = lAll[2*n]
                 sParam = lAll[2*n + 1]
                 if sParam not in self.dMeasParam:
                     # create list with current name
@@ -274,13 +313,13 @@ class Driver(VISA_Driver):
                 else:
                     # add to existing list
                     self.dMeasParam[sParam].append(sName)
-    
-    # helper function to calculate Lorentzian frequency distribution 
+
+    # helper function to calculate Lorentzian frequency distribution
     def calcLorentzianDistr(self, thetaMax, numPoints, qEst, centerFreq):
         theta = np.linspace(-thetaMax, thetaMax, numPoints)
         freq = np.multiply(centerFreq, (1 - np.multiply(1 / (2*qEst), np.tan(np.divide(theta, 2)))))
         return freq
-    
+
 
 
 if __name__ == '__main__':
