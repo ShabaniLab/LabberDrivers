@@ -393,8 +393,7 @@ def xyz_axis_to_angles(x, y, z):
     theta = np.rad2deg(atan2(sqrt(x ** 2 + y ** 2), z))
     phi = np.rad2deg(atan2(y, x))
     return theta, phi
-
-
+    
 class Converter:
     """Object handling a basis change.
 
@@ -404,7 +403,7 @@ class Converter:
 
     """
 
-    def __init__(self, axis, phi_offset, z_offset):
+    def __init__(self, axis, phi_offset, z_offset, ref_mode = None):
 
         axis_format, axis = axis
         if axis_format == "xyz":
@@ -415,11 +414,18 @@ class Converter:
         # new frame as a consequence to transform a vector in the original
         # frame to the new frame we need to apply the inverse rotations in the
         # reverse order
-        coordinate_change = [
-            Rotation.from_euler("z", axis[1], degrees=True),
-            Rotation.from_euler("y", axis[0], degrees=True),
-            Rotation.from_euler("z", phi_offset - axis[0], degrees=True),
-        ]
+        if ref_mode == "Plane (normal Y)": 
+            coordinate_change = [
+                Rotation.from_euler("z", axis[1], degrees=True),
+                Rotation.from_euler("x", axis[0], degrees=True),
+                Rotation.from_euler("z", phi_offset - axis[0], degrees=True),
+            ]
+        else:
+            coordinate_change = [
+                Rotation.from_euler("z", axis[1], degrees=True),
+                Rotation.from_euler("y", axis[0], degrees=True),
+                Rotation.from_euler("z", phi_offset - axis[0], degrees=True),
+            ]
         self._forward_change = (
             coordinate_change[2].inv()
             * coordinate_change[1].inv()
@@ -658,7 +664,6 @@ class SphericalConverter(Converter):
             self.from_new_basis(np.array([x_vals, y_vals, z_vals]).T).T,
             self.from_new_basis(np.array([x_rate, y_rate, z_rate]).T, no_offset=True).T,
         )
-
 
 class Driver(VISA_Driver):
     """ This class implements the Oxford Mercury IPS driver"""
@@ -1115,11 +1120,11 @@ class Driver(VISA_Driver):
         qname = "Power supply {} axis: Driver running"
         self.setValue(qname.format(axis), True)
 
-    def _create_converter(self, mode, theta, phi, phi_offset, z_offset):
+    def _create_converter(self, mode, theta, phi, phi_offset, z_offset, ref_mode = None):
         """Create a converter"""
         args = (("angles", (theta, phi)), phi_offset, z_offset)
         if mode == "XYZ":
-            self._converter = Converter(*args)
+            self._converter = Converter(*args, ref_mode)
         elif mode == "Cylindrical":
             self._converter = CylindricalConverter(*args)
         else:
@@ -1186,9 +1191,7 @@ class Driver(VISA_Driver):
                 rot1 = Rotation.from_euler(r1axis, ang1+ang2, degrees=True)
                 rot2 = Rotation.from_euler(r2axis, -ang2, degrees=True)
                 # rot1 = Rotation.from_euler('zy', [ang1,-ang2], degrees=True)
-                # rot2 = Rotation.from_euler(r2axis, -ang2, degrees=True)
                 x, y, z = (rot1*rot2).apply(norm_vector)
-                # x, y, z = (rot1).apply(norm_vector)
                 self.setValue("Direction x", x)
                 self.setValue("Direction y", y)
                 self.setValue("Direction z", z)
@@ -1197,17 +1200,17 @@ class Driver(VISA_Driver):
                 self.setValue("Direction phi", phi)
             elif "Y" in mode:
                 norm_vector = [0, 1, 0]
-                r1axis = "z"
-                r2axis = "x"
-                rot1 = Rotation.from_euler(r1axis, ang1+ang2, degrees=True)
-                rot2 = Rotation.from_euler(r2axis, ang2, degrees=True)
-                x, y, z = (rot1 * rot2).apply(norm_vector)
+                r1axis = "x"
+                r2axis = "z"
+                rot1 = Rotation.from_euler(r1axis, -ang1, degrees=True)
+                rot2 = Rotation.from_euler(r2axis,ang2+ang1, degrees=True)
+                x, y, z = (rot1*rot2).apply(norm_vector)
                 self.setValue("Direction x", x)
                 self.setValue("Direction y", y)
                 self.setValue("Direction z", z)
                 theta, phi = xyz_axis_to_angles(x, y, z)
-                self.setValue("Direction theta", -theta)
-                self.setValue("Direction phi", -phi)
+                self.setValue("Direction theta", -90+theta)
+                self.setValue("Direction phi", -90+phi)
             else:
                 raise ValueError("Unknown reference frame specification: %s" % mode)
         else:
@@ -1218,7 +1221,9 @@ class Driver(VISA_Driver):
         phi_offset = self.getValue("Phi offset")
         z_offset = self.getValue("Bz offset")
         mode = self.getValue("Specification mode")
-        self._create_converter(mode, theta, phi, phi_offset, z_offset)
+        ref_mode = self.getValue("Reference specification mode")
+
+        self._create_converter(mode, theta, phi, phi_offset, z_offset, ref_mode)
         self._update_fields()
 
     def _validate_targets(self, targets):
@@ -1229,8 +1234,11 @@ class Driver(VISA_Driver):
             )
 
     def _validate_rates(self, rates, max_rates):
+        rates = np.round(rates,2)
+        max_rates = np.round(max_rates,2)
         if any(np.any(np.greater(r, max_r)) for r, max_r in zip(rates, max_rates)):
             raise ValueError("Rate would exceed max rate: %s" % np.max(rates, axis=1))
+
 
 
 if __name__ == "__main__":
