@@ -365,7 +365,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
                     )
                 return quant.getTraceDict(
                     data,
-                    x=np.linspace(-ext, ext, points)
+                    x=np.linspace(-ext, ext, int(points))
                     / self.getValue("Source: load resistance"),
                 )
 
@@ -374,7 +374,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
             points = self.getValue("DMM: number of points")
             return quant.getTraceDict(
                 self._dr_trace,
-                x=np.linspace(-ext, ext, points)
+                x=np.linspace(-ext, ext, int(points))
                 / self.getValue("Source: load resistance"),
             )
 
@@ -580,7 +580,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
         reset = self.getValue("Source: reset rate")
         points = self.getValue("DMM: number of points")
 
-        set_points = np.linspace(-ext, ext, points)
+        set_points = np.linspace(-ext, ext, int(points))
         dmm_vals = np.empty_like(set_points)
         if with_li:
             li_vals = np.empty_like(set_points, dtype=complex)
