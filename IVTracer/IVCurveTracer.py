@@ -420,7 +420,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
                     data = self._perform_point_by_point_acquisition(
                         "without" not in acq_mode
                     )
-                bias = (np.linspace(-ext, ext, points) / self.getValue("DC Voltage divider"))
+                bias = (np.linspace(ext, -ext, int(points)) / self.getValue("DC Voltage divider"))
                 self._bias = bias
 
                 return quant.getTraceDict(
@@ -645,8 +645,8 @@ class Driver(InstrumentDriver.InstrumentWorker):
         offset = self.getValue("Bias offset")
         both_li = with_li and "2" in self.getValue("Acquisition mode")
 
-        set_points = np.linspace(-ext + offset * self.getValue("DC Voltage divider"),
-                    ext + offset * self.getValue("DC Voltage divider"), points)
+        set_points = np.linspace(ext + offset * self.getValue("DC Voltage divider"),
+                    -ext + offset * self.getValue("DC Voltage divider"), int(points))
         dmm_vals = np.empty_like(set_points)
         if with_li:
             li_vals = np.empty_like(set_points, dtype=complex)
@@ -668,12 +668,13 @@ class Driver(InstrumentDriver.InstrumentWorker):
 
         # Should only happen on the first scan since we reset the value after
         # setting
-        while self._source.is_ramping():
-            sleep(3)
+        #while self._source.is_ramping():
+            #sleep(0)
         # Go to the first point and wait
         source.goto_value(set_points[0], reset)
-        while source.is_ramping():
-            sleep(3)
+        sleep(3)
+        #while source.is_ramping():
+            #sleep(5)
 
         for i, v in enumerate(set_points):
             source.goto_value(v, reset)
@@ -686,7 +687,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
 
         # Go to the first point and wait
         source.goto_value(set_points[0], reset)
-
+        sleep(3)
         # Convert to current
         dmm_vals /= self.getValue("Trans-impedance amplifier: gain")
 

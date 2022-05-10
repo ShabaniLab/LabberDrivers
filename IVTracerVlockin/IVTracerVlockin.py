@@ -462,7 +462,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
                     data = self._perform_point_by_point_acquisition(
                         "without" not in acq_mode
                     )
-                bias = (np.linspace(-ext, ext, points) / self.getValue("DC Voltage divider"))
+                bias = (np.linspace(ext, -ext, int(points)) / self.getValue("DC Voltage divider"))
                 self._bias = bias
 
                 return quant.getTraceDict(
@@ -710,8 +710,8 @@ class Driver(InstrumentDriver.InstrumentWorker):
         offset = self.getValue("Bias offset")
         #both_li = with_li and "2" in self.getValue("Acquisition mode")
 
-        set_points = np.linspace(-ext + offset * self.getValue("DC Voltage divider"),
-                    ext + offset * self.getValue("DC Voltage divider"), points)
+        set_points = np.linspace(ext + offset * self.getValue("DC Voltage divider"),
+                    -ext + offset * self.getValue("DC Voltage divider"), int(points))
         dmm_vals1 = np.empty_like(set_points)
         dmm_vals2 = np.empty_like(set_points)
         Vac = np.empty_like(set_points)
@@ -738,12 +738,13 @@ class Driver(InstrumentDriver.InstrumentWorker):
 
         # Should only happen on the first scan since we reset the value after
         # setting
-        while self._source.is_ramping():
-            sleep(3)
+        #while self._source.is_ramping():
+            #sleep(3)
         # Go to the first point and wait
         source.goto_value(set_points[0], reset)
-        while source.is_ramping():
-            sleep(3)
+        sleep(3)
+        #while source.is_ramping():
+            #sleep(3)
 
         for i, v in enumerate(set_points):
             source.goto_value(v, reset)
