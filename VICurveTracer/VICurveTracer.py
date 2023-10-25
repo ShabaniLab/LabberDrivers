@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 import importlib
 import logging
+from enum import Enum
 from math import acos, atan2, copysign, cos, sin, sqrt
 from multiprocessing import RLock
+from pathlib import Path
 from threading import Event, Thread
 from time import sleep, time
 from typing import Dict, List, Tuple
@@ -10,13 +12,18 @@ from typing import Dict, List, Tuple
 import InstrumentDriver
 import numpy as np
 
-logger = logging.getLogger(__name__)
-# handler = logging.FileHandler(
-#     r"C:\Users\Shabani_Lab\Documents\MagnetDebug\log.txt", mode="w"
-# )
-# handler.setLevel(logging.DEBUG)
-# logger.addHandler(handler)
-# logger.critical("Test handler")
+logger = logging.getLogger("VICurveTracer")
+fh = logging.FileHandler(
+    Path(f"~/Labber/userlogs/{__name__}_log.txt").expanduser(), mode="a",
+)
+fh.setFormatter(
+    logging.Formatter(
+        "%(asctime)s %(levelname)5s [%(name)s.%(funcName)s:%(lineno)d] %(message)s",
+        datefmt="%Y/%m/%d %H:%M:%S",
+    )
+)
+logger.addHandler(fh)
+logger.setLevel(logging.DEBUG)
 
 
 class BiasGenerator:
@@ -171,6 +178,16 @@ class LockIn:
         raise NotImplementedError
 
 
+# Labber is using python 3.7.11, StrEnum was introduced in python 3.11 :(
+class AcqOrder(str, Enum):
+    """Acquisition order: the order in which the points are acquired."""
+
+    INCREASING = "increasing"  # -ve to +ve bias
+    DECREASING = "decreasing"  # +ve to -ve bias
+    INSIDE_OUT = "inside-out"  # 0 to +/-ve bias
+    OUTSIDE_IN = "outside-in"  # +/-ve to 0 bias
+
+
 class Driver(InstrumentDriver.InstrumentWorker):
     """This class implements the VICurveTracer driver.
 
@@ -247,6 +264,9 @@ class Driver(InstrumentDriver.InstrumentWorker):
                 # Center the points in the window of acquisition and add padding
                 self._prepare_ramp(ext, points, ac_rate, re_rate)
 
+            self._check_even_number_of_points()
+
+
     def performClose(self, bError=False, options={}):
         """Perform the close instrument connection operation."""
         self._source.close()
@@ -295,6 +315,9 @@ class Driver(InstrumentDriver.InstrumentWorker):
                     "The selected source does not support continuous sweeps"
                 )
             self._change_meter_acquisition_mode(value)
+        elif q_name == "Acquisition order":
+            self.setValue(q_name, value)
+            self._check_even_number_of_points()
         elif q_name == "Source: range":
             with self._lock:
                 self._source.set_range(value)
@@ -310,6 +333,8 @@ class Driver(InstrumentDriver.InstrumentWorker):
             with self._lock:
                 self._meter.set_range(value)
         elif q_name == "DMM: number of points":
+            self.setValue(q_name, value)
+            value = self._check_even_number_of_points()
             update_ramps = True
             points = int(value)
         elif q_name == "DMM: acquisition rate":
@@ -358,14 +383,14 @@ class Driver(InstrumentDriver.InstrumentWorker):
             points = self.getValue("DMM: number of points")
             with self._lock:
                 if acq_mode == "Continuous":
-                    data = self._perform_continuous_acquisition()
+                    xdata, ydata = self._perform_continuous_acquisition()
                 else:
-                    data = self._perform_point_by_point_acquisition(
+                    xdata, ydata = self._perform_point_by_point_acquisition(
                         "without" not in acq_mode
                     )
                 return quant.getTraceDict(
-                    data,
-                    x=np.linspace(-ext, ext, int(points))
+                    ydata,
+                    x=xdata
                     / self.getValue("Source: load resistance"),
                 )
 
@@ -382,6 +407,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
         # return the value
         elif q_name in (
             "Acquisition mode",
+            "Acquisition order",
             "Source: Model",
             "Source: VISA address",
             "DMM: Model",
@@ -570,15 +596,32 @@ class Driver(InstrumentDriver.InstrumentWorker):
         # Reset the source so that it has time to reset
         self._source.start_ramp(1)
 
-        return data
+        return np.linspace(-ext, ext, int(points)), data
 
     def _perform_point_by_point_acquisition(self, with_li: bool):
         """Perform a point by point acquisition."""
         ext = self.getValue("Source: extrema")
         reset = self.getValue("Source: reset rate")
-        points = self.getValue("DMM: number of points")
+        points = int(self.getValue("DMM: number of points"))
+        order = self.getValue("Acquisition order")
 
-        set_points = np.linspace(-ext, ext, int(points))
+        if order == AcqOrder.INCREASING:
+            set_points = np.linspace(-ext, ext, points)
+        elif order == AcqOrder.DECREASING:
+            set_points = np.linspace(ext, -ext, points)
+        elif order == AcqOrder.INSIDE_OUT:
+            set_points = np.concatenate(
+                [np.linspace(0, ext, points // 2), np.linspace(0, -ext, points // 2)]
+            )
+        elif order == AcqOrder.OUTSIDE_IN:
+            set_points = np.concatenate(
+                [np.linspace(ext, 0, points // 2), np.linspace(-ext, 0, points // 2)]
+            )
+        else:
+            raise NotImplementedError(
+                f"Point-by-point acquisition order '{order}' is not implemented"
+            )
+
         dmm_vals = np.empty_like(set_points)
         if with_li:
             li_vals = np.empty_like(set_points, dtype=complex)
@@ -615,7 +658,19 @@ class Driver(InstrumentDriver.InstrumentWorker):
                 / self.getValue("Lock-in: load resistance")
             )
 
-        return dmm_vals
+        return set_points, dmm_vals
+
+    def _check_even_number_of_points(self):
+        # some acquisition orders require an even number of points
+        npoints = self.getValue("DMM: number of points")
+        if self.getValue("Acquisition order") in (
+            AcqOrder.INSIDE_OUT,
+            AcqOrder.OUTSIDE_IN,
+        ):
+            npoints += npoints % 2
+            self.setValue("DMM: number of points", npoints)
+        return npoints
+
 
 
 if __name__ == "__main__":
