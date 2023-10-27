@@ -548,9 +548,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
         curr = self._source.current_value()
         logger.critical(f"{curr}")
         if curr != -init:
-            self._source.goto_value(-init, reset)
-            while self._source.is_ramping():
-                sleep(0.01)
+            self._source.goto_value(-init, reset, wait=True)
 
         # The DMM is preconfigured for the right number of points, so simply arm
         self._meter.arm_device()
@@ -598,20 +596,17 @@ class Driver(InstrumentDriver.InstrumentWorker):
         # setting
         while self._source.is_ramping():
             sleep(0.01)
+
         # Go to the first point and wait
-        source.goto_value(set_points[0], reset)
-        while source.is_ramping():
-            sleep(0.01)
+        source.goto_value(set_points[0], reset, wait=True)
 
         for i, v in enumerate(set_points):
-            source.goto_value(v, reset)
-            while source.is_ramping():
-                sleep(0.01)
+            source.goto_value(v, reset, wait=True)
             dmm_vals[i] = dmm.read_value()
             if with_li:
                 li_vals[i] = li.read_value()
 
-        # Go to the first point and wait
+        # Reset to the first point
         source.goto_value(set_points[0], reset)
 
         if with_li:

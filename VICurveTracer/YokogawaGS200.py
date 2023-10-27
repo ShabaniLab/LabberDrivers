@@ -1,5 +1,6 @@
 import pyvisa
 from typing import List, Tuple
+from time import sleep
 
 from VICurveTracer import BiasGenerator
 
@@ -65,8 +66,11 @@ class Driver:
         """Get the current value of the output."""
         return float(self._rsc.query(":SOUR:LEV?"))
 
-    def goto_value(self, value, slope):
-        """Go to the specified value immediately."""
+    def goto_value(self, value, slope, wait=False):
+        """Ramp to specified `value` with speed `slope`.
+
+        If wait=True, this function blocks until the ramp finishes.
+        """
         rsc = self._rsc
         curr_value = self.current_value()
         # Program cannot be shorter than 0.1
@@ -76,6 +80,10 @@ class Driver:
         else:
             rsc.write(RAMP_TEMPLATE.format(sweep_time=sweep_time, value=value))
             self._maybe_ramping = True
+
+        if wait:
+            while self.is_ramping():
+                sleep(0.01)
 
     def prepare_ramps(self, ramps: List[Tuple[float, float, float]]):
         """Prepare ramps by creating a program executing them in series.
