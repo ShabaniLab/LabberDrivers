@@ -605,6 +605,8 @@ class Driver(InstrumentDriver.InstrumentWorker):
 
         for i, v in enumerate(set_points):
             source.goto_value(v, reset)
+            while source.is_ramping():
+                sleep(0.01)
             dmm_vals[i] = dmm.read_value()
             if with_li:
                 li_vals[i] = li.read_value()
