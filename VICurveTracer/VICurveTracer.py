@@ -12,18 +12,18 @@ from typing import Dict, List, Tuple
 import InstrumentDriver
 import numpy as np
 
-logger = logging.getLogger("VICurveTracer")
-fh = logging.FileHandler(
-    Path(f"~/Labber/userlogs/{__name__}_log.txt").expanduser(), mode="a",
-)
-fh.setFormatter(
-    logging.Formatter(
-        "%(asctime)s %(levelname)5s [%(name)s.%(funcName)s:%(lineno)d] %(message)s",
-        datefmt="%Y/%m/%d %H:%M:%S",
-    )
-)
-logger.addHandler(fh)
-logger.setLevel(logging.DEBUG)
+#logger = logging.getLogger("VICurveTracer")
+#fh = logging.FileHandler(
+#    Path(__file__).parent / "VICurveTracer.log", mode="a",
+#)
+#fh.setFormatter(
+#    logging.Formatter(
+#        "%(asctime)s %(levelname)5s [%(name)s.%(funcName)s:%(lineno)d] %(message)s",
+#        datefmt="%Y/%m/%d %H:%M:%S",
+#    )
+#)
+#logger.addHandler(fh)
+#logger.setLevel(logging.WARN)
 
 
 class BiasGenerator:
@@ -572,7 +572,6 @@ class Driver(InstrumentDriver.InstrumentWorker):
         while self._source.is_ramping():
             sleep(0.01)
         curr = self._source.current_value()
-        logger.critical(f"{curr}")
         if curr != -init:
             self._source.goto_value(-init, reset, wait=True)
 
