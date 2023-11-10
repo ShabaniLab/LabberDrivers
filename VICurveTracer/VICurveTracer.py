@@ -207,6 +207,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
         # In Point by point (with Lock-in) this is used to store the LI trace
         # acquired at the same time as the VI.
         self._dr_trace = None
+        self._dr_xvals = None
         # Padding points help overcome issues with respect of the ramp by the
         # source
         self._padding_points = 0
@@ -399,7 +400,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
             points = self.getValue("DMM: number of points")
             return quant.getTraceDict(
                 self._dr_trace,
-                x=np.linspace(-ext, ext, int(points))
+                x=self._dr_xvals
                 / self.getValue("Source: load resistance"),
             )
 
@@ -656,6 +657,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
                 self.getValue("Lock-in: amplitude")
                 / self.getValue("Lock-in: load resistance")
             )
+            self._dr_xvals = set_points
 
         return set_points, dmm_vals
 
