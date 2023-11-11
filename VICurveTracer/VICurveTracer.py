@@ -12,18 +12,19 @@ from typing import Dict, List, Tuple
 import InstrumentDriver
 import numpy as np
 
-#logger = logging.getLogger("VICurveTracer")
-#fh = logging.FileHandler(
-#    Path(__file__).parent / "VICurveTracer.log", mode="a",
-#)
-#fh.setFormatter(
-#    logging.Formatter(
-#        "%(asctime)s %(levelname)5s [%(name)s.%(funcName)s:%(lineno)d] %(message)s",
-#        datefmt="%Y/%m/%d %H:%M:%S",
-#    )
-#)
-#logger.addHandler(fh)
-#logger.setLevel(logging.WARN)
+logger = logging.getLogger("VICurveTracer")
+fh = logging.FileHandler(
+    Path(__file__).parent / "VICurveTracer.log", mode="a",
+)
+fh.setFormatter(
+    logging.Formatter(
+        "%(asctime)s %(levelname)5s [%(name)s.%(funcName)s:%(lineno)d] %(message)s",
+        datefmt="%Y/%m/%d %H:%M:%S",
+    )
+)
+logger.addHandler(fh)
+logger.setLevel(logging.DEBUG)
+logging.disable(logging.CRITICAL)
 
 
 class BiasGenerator:
