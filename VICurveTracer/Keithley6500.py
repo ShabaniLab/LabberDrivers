@@ -83,7 +83,7 @@ class Driver(VoltMeter):
     def get_averaging_time(self):
         """"""
         rsc = self._rsc
-        nplc = int(rsc.query(":VOLT:DC:NPLC?"))
+        nplc = float(rsc.query(":VOLT:DC:NPLC?"))
         average = int(rsc.query(":VOLT:AVER:STAT?"))
         count = int(rsc.query(":VOLT:AVER:COUN?"))
         return round((count if average else 1) * nplc / 60, 3)
