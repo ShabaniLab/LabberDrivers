@@ -99,14 +99,6 @@ class VoltMeter:
         """"""
         raise NotImplementedError
 
-    def get_averaging_time(self):
-        """"""
-        raise NotImplementedError
-
-    def set_averaging_time(self, value):
-        """"""
-        raise NotImplementedError
-
     def list_acquisition_rates(self):
         """"""
         raise NotImplementedError
@@ -342,9 +334,18 @@ class Driver(InstrumentDriver.InstrumentWorker):
         elif q_name == "DMM: acquisition rate":
             update_ramps = True
             ac_rate = value
-        elif q_name == "DMM: averaging time":
+        elif q_name == "DMM: NPLC":
             with self._lock:
-                self._meter.set_averaging_time(value)
+                return self._meter.set_nplc(value)
+        elif q_name == "DMM: Filter":
+            with self._lock:
+                return self._meter.set_filter_enabled(value)
+        elif q_name == "DMM: Filter type":
+            with self._lock:
+                return self._meter.set_filter_type(value)
+        elif q_name == "DMM: Filter count":
+            with self._lock:
+                return self._meter.set_filter_count(value)
         elif q_name == "Lock-in: frequency":
             with self._lock:
                 self._li.set_frequency(value)
@@ -354,14 +355,6 @@ class Driver(InstrumentDriver.InstrumentWorker):
         elif q_name == "Lock-in: time constant":
             with self._lock:
                 self._li.set_tc(value)
-                self._meter.set_averaging_time(
-                    value * self.getValue("Lock-in: settling time")
-                )
-        elif q_name == "Lock-in: settling time":
-            with self._lock:
-                self._meter.set_averaging_time(
-                    value * self.getValue("Lock-in: time constant")
-                )
         elif q_name == "Lock-in: load resistance":
             pass
 
@@ -446,9 +439,21 @@ class Driver(InstrumentDriver.InstrumentWorker):
             with self._lock:
                 return self._meter.get_acquisition_rate()
 
-        elif q_name == "DMM: averaging time":
+        elif q_name == "DMM: NPLC":
             with self._lock:
-                return self._meter.get_averaging_time()
+                return self._meter.get_nplc()
+
+        elif q_name == "DMM: Filter":
+            with self._lock:
+                return self._meter.get_filter_enabled()
+
+        elif q_name == "DMM: Filter type":
+            with self._lock:
+                return self._meter.get_filter_type()
+
+        elif q_name == "DMM: Filter count":
+            with self._lock:
+                return self._meter.get_filter_count()
 
         elif q_name == "Lock-in: frequency":
             with self._lock:
@@ -465,20 +470,13 @@ class Driver(InstrumentDriver.InstrumentWorker):
         elif q_name == "Lock-in: time constant":
             with self._lock:
                 value = self._li.get_tc()
-                # Ensure this setting cannot go out of sync.
-                self._meter.set_averaging_time(
-                    value * self.getValue("Lock-in: settling time")
-                )
                 return value
 
         elif q_name == "Lock-in: settling time":
-            with self._lock:
-                value = self.getValue("Lock-in: settling time")
-                # Ensure this setting cannot go out of sync.
-                self._meter.set_averaging_time(
-                    value * self.getValue("Lock-in: time constant")
-                )
-            return value
+            # aperture = seconds per sample
+            aperture = self.getValue("DMM: NPLC") / 60  # assume 60Hz
+            count = self.getValue("DMM: Filter count")
+            return aperture * count / self.getValue("Lock-in: time constant")
         else:
             raise KeyError("Unknown quantity: %s" % q_name)
 
@@ -542,14 +540,6 @@ class Driver(InstrumentDriver.InstrumentWorker):
         """Change the meter configuation based on the acquisition mode."""
         if "Point by point" in mode:
             self._meter.set_acquisition_mode("point by point")
-            if "without" not in mode:
-                self._meter.set_averaging_time(
-                    self.getValue("Lock-in: time constant")
-                    * self.getValue("Lock-in: settling time")
-                )
-            else:
-                if "without" in mode:
-                    self._meter.set_averaging_time(self.getValue("DMM: averaging time"))
         else:
             ext = self.getValue("Source: extrema")
             re_rate = self.getValue("Source: reset rate")

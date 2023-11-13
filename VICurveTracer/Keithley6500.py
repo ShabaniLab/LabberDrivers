@@ -1,3 +1,4 @@
+import logging
 import pyvisa
 from pyvisa import util
 
@@ -6,6 +7,9 @@ import numpy as np
 from VICurveTracer import VoltMeter
 
 SRATE = 1000
+
+logger = logging.getLogger(f"VICurveTracer.{__name__}")
+logger.setLevel(logging.DEBUG)
 
 
 class Driver(VoltMeter):
@@ -80,42 +84,36 @@ class Driver(VoltMeter):
             # Use ASCII for single point transfer
             rsc.write(':FUNC "VOLT:DC";:FORM:DATA ASC;')  # Data format
 
-    def get_averaging_time(self):
-        """"""
-        rsc = self._rsc
-        nplc = float(rsc.query(":VOLT:DC:NPLC?"))
-        average = int(rsc.query(":VOLT:AVER:STAT?"))
-        count = int(rsc.query(":VOLT:AVER:COUN?"))
-        return round((count if average else 1) * nplc / 60, 3)
+    def get_nplc(self):
+        """Get the number of power-line cycles."""
+        return float(self._rsc.query(":VOLT:DC:NPLC?"))
 
-    def set_averaging_time(self, value):
-        """"""
-        rsc = self._rsc
-        # Use repeating average
-        rsc.write(":VOLT:AVER:TCON REP")
-        nplc = value / (1 / 60)
-        err_10 = nplc % 10
-        err_1 = nplc % 1
-        err_01 = ((10 * nplc) % 1) / 10
-        # Try to prefer larger nplc if possible (those factor are pure guesses)
-        index = np.argmin([err_10, err_1 * 1.5, err_01 * 3])
-        if index == 0:
-            avg = int(nplc // 10)
-            nplc = 10
-        elif index == 1:
-            avg = int(nplc // 1)
-            nplc = 1
-        else:
-            avg = int((10 * nplc) // 1)
-            nplc = 0.1
+    def set_nplc(self, value):
+        """Set the number of power-line cycles."""
+        self._rsc.write(f":VOLT:DC:NPLC {value}")
+        return value
 
-        rsc.write(f":VOLT:DC:NPLC {nplc}")
-        if avg > 1:
-            rsc.write(f":VOLT:AVER:STAT 1;:VOLT:AVER:COUN {avg}")
-        else:
-            rsc.write(f":VOLT:AVER:STAT 1;:VOLT:AVER:COUN 1")
+    def get_filter_enabled(self):
+        return int(self._rsc.query(":VOLT:AVER:STAT?"))
 
-        return nplc * 1 / 60 * avg
+    def set_filter_enabled(self, value):
+        self._rsc.write(f":VOLT:AVER:STAT {value}")
+        return value
+
+    def get_filter_type(self):
+        return self._rsc.query(":VOLT:AVER:TCON?")
+
+    def set_filter_type(self, value):
+        self._rsc.write(f":VOLT:AVER:TCON {value}")
+        return value
+
+    def get_filter_count(self):
+        return int(self._rsc.query(":VOLT:AVER:COUN?"))
+
+    def set_filter_count(self, value):
+        value = int(value)
+        self._rsc.write(f":VOLT:AVER:COUN {value}")
+        return value
 
     def prepare_acquisition(self, points):
         """Prepare the device to measure a series of points.
