@@ -250,7 +250,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
 
             self._change_meter_acquisition_mode(acq_mode)
             if acq_mode == "Continuous":
-                ext = self.getValue("Source: extrema")
+                ext = self.getValue("Source: max")
                 re_rate = self.getValue("Source: reset rate")
                 points = self.getValue("DMM: number of points")
                 ac_rate = self.readValueFromOther("DMM: acquisition rate")
@@ -315,7 +315,12 @@ class Driver(InstrumentDriver.InstrumentWorker):
         elif q_name == "Source: range":
             with self._lock:
                 self._source.set_range(value)
-        elif q_name == "Source: extrema":
+        elif q_name == "Source: min":
+            value = abs(value)
+            quant.setValue(value)
+            return value
+        elif q_name == "Source: max":
+            value = abs(value)
             update_ramps = True
             ext = value
         elif q_name == "Source: reset rate":
@@ -362,7 +367,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
             pass
 
         if self.getValue("Acquisition mode") == "Continuous" and update_ramps:
-            ext = ext or self.getValue("Source: extrema")
+            ext = ext or self.getValue("Source: max")
             re_rate = re_rate or self.getValue("Source: reset rate")
             points = points or self.getValue("DMM: number of points")
             ac_rate = ac_rate or self.getValue("DMM: acquisition rate")
@@ -377,7 +382,6 @@ class Driver(InstrumentDriver.InstrumentWorker):
 
         if q_name == "VI curve":
             acq_mode = self.getValue("Acquisition mode")
-            ext = self.getValue("Source: extrema")
             points = self.getValue("DMM: number of points")
             with self._lock:
                 if acq_mode == "Continuous":
@@ -410,7 +414,8 @@ class Driver(InstrumentDriver.InstrumentWorker):
             "DMM: VISA address",
             "Lock-In: Model",
             "Lock-In: VISA address",
-            "Source: extrema",
+            "Source: min",
+            "Source: max",
             "Source: reset rate",
             "Source: load resistance",
             "DMM: number of points",
@@ -544,7 +549,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
         if "Point by point" in mode:
             self._meter.set_acquisition_mode("point by point")
         else:
-            ext = self.getValue("Source: extrema")
+            ext = self.getValue("Source: max")
             re_rate = self.getValue("Source: reset rate")
             points = self.getValue("DMM: number of points")
             ac_rate = self.getValue("DMM: acquisition rate")
@@ -554,7 +559,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
 
     def _perform_continuous_acquisition(self):
         """Perform a continuous acquisition."""
-        ext = self.getValue("Source: extrema")
+        ext = self.getValue("Source: max")
         reset = self.getValue("Source: reset rate")
         points = self.getValue("DMM: number of points")
         # Center the points in the window of acquisition
@@ -592,22 +597,23 @@ class Driver(InstrumentDriver.InstrumentWorker):
 
     def _perform_point_by_point_acquisition(self, with_li: bool):
         """Perform a point by point acquisition."""
-        ext = self.getValue("Source: extrema")
+        min_ = self.getValue("Source: min")
+        max_ = self.getValue("Source: max")
         reset = self.getValue("Source: reset rate")
         points = int(self.getValue("DMM: number of points"))
         order = self.getValue("Acquisition order")
 
         if order == AcqOrder.INCREASING:
-            set_points = np.linspace(-ext, ext, points)
+            set_points = np.linspace(-max_, max_, points)
         elif order == AcqOrder.DECREASING:
-            set_points = np.linspace(ext, -ext, points)
+            set_points = np.linspace(max_, -max_, points)
         elif order == AcqOrder.INSIDE_OUT:
             set_points = np.concatenate(
-                [np.linspace(0, ext, points // 2), np.linspace(0, -ext, points // 2)]
+                [np.linspace(min_, max_, points // 2), np.linspace(-min_, -max_, points // 2)]
             )
         elif order == AcqOrder.OUTSIDE_IN:
             set_points = np.concatenate(
-                [np.linspace(ext, 0, points // 2), np.linspace(-ext, 0, points // 2)]
+                [np.linspace(max_, min_, points // 2), np.linspace(-max_, -min_, points // 2)]
             )
         else:
             raise NotImplementedError(
@@ -624,7 +630,7 @@ class Driver(InstrumentDriver.InstrumentWorker):
 
         # Ensure we are using the proper range
         self._source.select_range(
-            ext, self.getValue("Source: load resistance")
+            max_, self.getValue("Source: load resistance")
         )
 
         # Should only happen on the first scan since we reset the value after
