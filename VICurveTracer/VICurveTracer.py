@@ -323,9 +323,12 @@ class Driver(InstrumentDriver.InstrumentWorker):
             re_rate = value
         elif q_name == "Source: load resistance":
             pass
+        elif q_name == "DMM: auto-range":
+            with self._lock:
+                return self._meter.set_autorange(value)
         elif q_name == "DMM: range":
             with self._lock:
-                self._meter.set_range(value)
+                return self._meter.set_range(value)
         elif q_name == "DMM: number of points":
             self.setValue(q_name, value)
             value = self._check_even_number_of_points()
@@ -423,9 +426,9 @@ class Driver(InstrumentDriver.InstrumentWorker):
             with self._lock:
                 return self._source.get_range()
 
-        elif q_name == "DMM: list ranges":
+        elif q_name == "DMM: auto-range":
             with self._lock:
-                return self._meter.list_ranges()
+                return self._meter.get_autorange()
 
         elif q_name == "DMM: range":
             with self._lock:

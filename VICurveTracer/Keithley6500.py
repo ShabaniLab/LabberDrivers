@@ -34,24 +34,21 @@ class Driver(VoltMeter):
     def close(self):
         self._rsc.close()
 
-    def list_ranges(self):
-        """List valid ranges for the Keithley 2000."""
-        return "100mV, 1V, 10V, 100V, 1000V"
+    def get_autorange(self):
+        return int(self._rsc.query(":SENS:VOLT:DC:RANG:AUTO?"))
+
+    def set_autorange(self, value):
+        self._rsc.write(f":SENS:VOLT:DC:RANG:AUTO {value}")
+        return self.get_autorange()
 
     def get_range(self):
-        """Return teh currently active range."""
+        """Return the currently active range."""
         return float(self._rsc.query(":SENS:VOLT:DC:RANG?"))
 
     def set_range(self, value):
         """Set the range."""
-        if value not in (100e-3, 1, 10, 100, 1000):
-            raise ValueError("Invalid range specified.")
-        resp = self._rsc.query(f":SENS:VOLT:DC:RANG {value};:VOLT:DC:RANG?")
-        if float(resp) != value:
-            raise RuntimeError(
-                f"Failed to set range (after setting value is {resp},"
-                f"expected {value}"
-            )
+        self._rsc.write(f":SENS:VOLT:DC:RANG {value}")
+        return self.get_range()
 
     def list_acquisition_rates(self):
         """List the valid acquisition rate.
