@@ -38,7 +38,7 @@ class Driver(VoltMeter):
         return int(self._rsc.query(":SENS:VOLT:DC:RANG:AUTO?"))
 
     def set_autorange(self, value):
-        self._rsc.write(f":SENS:VOLT:DC:RANG:AUTO {value}")
+        self._rsc.write(f":SENS:VOLT:DC:RANG:AUTO {int(value)}")
         return self.get_autorange()
 
     def get_range(self):
@@ -94,8 +94,8 @@ class Driver(VoltMeter):
         return int(self._rsc.query(":VOLT:AVER:STAT?"))
 
     def set_filter_enabled(self, value):
-        self._rsc.write(f":VOLT:AVER:STAT {value}")
-        return value
+        self._rsc.write(f":VOLT:AVER:STAT {int(value)}")
+        return self.get_filter_enabled()
 
     def get_filter_type(self):
         return self._rsc.query(":VOLT:AVER:TCON?")
