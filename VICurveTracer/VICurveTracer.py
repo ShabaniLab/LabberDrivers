@@ -396,8 +396,6 @@ class Driver(InstrumentDriver.InstrumentWorker):
                 )
 
         if q_name == "dR vs I curve":
-            ext = self.getValue("Source: extrema")
-            points = self.getValue("DMM: number of points")
             return quant.getTraceDict(
                 self._dr_trace,
                 x=self._dr_xvals
