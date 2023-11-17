@@ -483,7 +483,10 @@ class Driver(InstrumentDriver.InstrumentWorker):
         elif q_name == "Lock-in: settling time":
             # aperture = seconds per sample
             aperture = self.getValue("DMM: NPLC") / 60  # assume 60Hz
-            count = self.getValue("DMM: Filter count")
+            if self.getValue("DMM: Filter"):
+                count = self.getValue("DMM: Filter count")
+            else:
+                count = 1
             return aperture * count / self.getValue("Lock-in: time constant")
         else:
             raise KeyError("Unknown quantity: %s" % q_name)
