@@ -53,6 +53,9 @@ class Driver(VISA_Driver):
         we need to properly parse them.
 
         """
+        if quant.name == "Fridge":
+            return quant.getValue()
+
         get_cmd = quant.get_cmd.format(**self._uids)
         answer = self.askAndLog(get_cmd, False)
         if answer.endswith("N/A"):
@@ -87,6 +90,10 @@ class Driver(VISA_Driver):
         This function should return the actual value set by the instrument
 
         """
+        if quant.name == "Fridge":
+            quant.setValue(value)
+            return value
+
         q_name = quant.name
         cmd = quant.getCmdStringFromValue(value)
         if q_name.endswith("heater range"):
