@@ -1,8 +1,11 @@
+import logging
 import pyvisa
 from typing import List, Tuple
 from time import sleep
 
 from VICurveTracer import BiasGenerator
+
+logger = logging.getLogger(f"VICurveTracer.{__name__}")
 
 RAMP_TEMPLATE = (
     "*CLS;"
@@ -72,6 +75,11 @@ class Driver:
         If wait=True, this function blocks until the ramp finishes.
         """
         rsc = self._rsc
+
+        error = rsc.query(":STAT:ERR?")  # <integer>,<character string>
+        err_code, err_msg = error.split(",", 1)
+        if int(err_code) != 0:
+            logger.error(f"{err_msg} (code={err_code})")
         curr_value = self.current_value()
         # Program cannot be shorter than 0.1
         sweep_time = round(abs(value - curr_value) / slope, 1)

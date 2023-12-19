@@ -23,9 +23,7 @@ fh.setFormatter(
     )
 )
 logger.addHandler(fh)
-logger.setLevel(logging.DEBUG)
-logging.disable(logging.CRITICAL)
-
+logger.setLevel(logging.ERROR)
 
 class BiasGenerator:
     """Bias current generator for VICurveTracer."""
