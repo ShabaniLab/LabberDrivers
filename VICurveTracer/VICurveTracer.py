@@ -629,19 +629,14 @@ class Driver(InstrumentDriver.InstrumentWorker):
         dmm = self._meter
         li = self._li
 
-        # Ensure we are using the proper range
-        self._source.select_range(
-            max_, self.getValue("Source: load resistance")
-        )
-
-        # Should only happen on the first scan since we reset the value after
-        # setting
+        # wait for source to finish executing last program
         while self._source.is_ramping():
             sleep(0.01)
 
-        # Go to the first point and wait
+        self._source.select_range(
+            max_, self.getValue("Source: load resistance")
+        )
         source.goto_value(set_points[0], reset, wait=True)
-
         for i, v in enumerate(set_points):
             source.goto_value(v, reset, wait=True)
             dmm_vals[i] = dmm.read_value()
